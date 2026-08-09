@@ -6,23 +6,38 @@ use std::path::{Path, PathBuf};
 
 pub fn append_jsonl(out_dir: &Path, s: &Scored) -> Result<()> {
     let path = out_dir.join("results.jsonl");
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path).with_context(|| format!("Failed to open {}", path.display()))?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("Failed to open {}", path.display()))?;
     writeln!(f, "{}", serde_json::to_string(s)?)?;
     Ok(())
 }
 
 fn header(spec: &Spec, rows: &[&Scored]) -> String {
-    let mut md = format!("# Scoring Report — {} ({})\n\n", spec.name, spec.store.label());
+    let mut md = format!(
+        "# Scoring Report — {} ({})\n\n",
+        spec.name,
+        spec.store.label()
+    );
     if !spec.scoring_source.is_empty() {
         md.push_str(&format!("> Scoring basis: {}\n\n", spec.scoring_source));
     }
     let rounds = rows.first().map(|r| r.rounds).unwrap_or(0);
-    let models = rows.first().map(|r| r.models.join(", ")).unwrap_or_default();
+    let models = rows
+        .first()
+        .map(|r| r.models.join(", "))
+        .unwrap_or_default();
     md.push_str(&format!(
         "{} documents · {} scoring rounds per document · Scoring model: {}\n\n",
         rows.len(),
         rounds,
-        if models.is_empty() { "-".into() } else { models }
+        if models.is_empty() {
+            "-".into()
+        } else {
+            models
+        }
     ));
     md
 }
@@ -54,7 +69,11 @@ fn table(spec: &Spec, rows: &[&Scored]) -> String {
             s.metrics.total_chars,
             s.metrics.keyword_coverage,
             s.metrics.keyword_total,
-            if s.format_issues.is_empty() { "-".to_string() } else { format!("{} issue(s)", s.format_issues.len()) }
+            if s.format_issues.is_empty() {
+                "-".to_string()
+            } else {
+                format!("{} issue(s)", s.format_issues.len())
+            }
         ));
     }
     md
@@ -73,8 +92,16 @@ fn details(rows: &[&Scored]) -> String {
             s.metrics.emoji_count
         ));
         if !s.metrics.field_chars.is_empty() {
-            let breakdown: Vec<String> = s.metrics.field_chars.iter().map(|(k, v)| format!("{}={} chars", k, v)).collect();
-            md.push_str(&format!("Character count by field: {}\n\n", breakdown.join(", ")));
+            let breakdown: Vec<String> = s
+                .metrics
+                .field_chars
+                .iter()
+                .map(|(k, v)| format!("{}={} chars", k, v))
+                .collect();
+            md.push_str(&format!(
+                "Character count by field: {}\n\n",
+                breakdown.join(", ")
+            ));
         }
         for c in &s.comments {
             if !c.trim().is_empty() {
@@ -89,7 +116,11 @@ fn details(rows: &[&Scored]) -> String {
             md.push('\n');
         }
         md.push_str("Improvement instructions:\n\n");
-        for imp in s.improvements.iter().filter(|i| !s.format_issues.contains(i)) {
+        for imp in s
+            .improvements
+            .iter()
+            .filter(|i| !s.format_issues.contains(i))
+        {
             md.push_str(&format!("- {}\n", imp));
         }
     }
@@ -99,12 +130,19 @@ fn details(rows: &[&Scored]) -> String {
 /// Ranking report.
 pub fn write_report(out_dir: &Path, spec: &Spec, scored: &[Scored]) -> Result<PathBuf> {
     let mut rows: Vec<&Scored> = scored.iter().collect();
-    rows.sort_by(|a, b| b.total.partial_cmp(&a.total).unwrap_or(std::cmp::Ordering::Equal));
+    rows.sort_by(|a, b| {
+        b.total
+            .partial_cmp(&a.total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut md = header(spec, &rows);
     md.push_str(&table(spec, &rows));
     md.push_str(&details(&rows));
-    md.push_str(&format!("\n---\n\nCumulative API cost: ${:.4}\n", crate::llm::total_cost_usd()));
+    md.push_str(&format!(
+        "\n---\n\nCumulative API cost: ${:.4}\n",
+        crate::llm::total_cost_usd()
+    ));
 
     let path = out_dir.join("report.md");
     std::fs::write(&path, md).with_context(|| format!("Failed to write {}", path.display()))?;
@@ -133,12 +171,23 @@ pub fn write_loop_report(
             Some(p) => format!("{:+.1}", h.total - p),
             None => "-".to_string(),
         };
-        md.push_str(&format!("| {} | {:.1} | {} | {} chars | {} issue(s) |\n", h.label, h.total, d, h.metrics.total_chars, h.format_issues.len()));
+        md.push_str(&format!(
+            "| {} | {:.1} | {} | {} chars | {} issue(s) |\n",
+            h.label,
+            h.total,
+            d,
+            h.metrics.total_chars,
+            h.format_issues.len()
+        ));
         prev = Some(h.total);
     }
 
     if let Some((first, best)) = gate {
-        let loop_delta = history.iter().map(|h| h.total).fold(f64::NEG_INFINITY, f64::max) - history[0].total;
+        let loop_delta = history
+            .iter()
+            .map(|h| h.total)
+            .fold(f64::NEG_INFINITY, f64::max)
+            - history[0].total;
         let gate_delta = best.total - first.total;
         md.push_str(&format!(
             "\n## Held-out Validation (scoring model not used in loop: {})\n\n\
@@ -148,7 +197,10 @@ pub fn write_loop_report(
             best.models.join(", "),
             history[0].total,
             first.total,
-            history.iter().map(|h| h.total).fold(f64::NEG_INFINITY, f64::max),
+            history
+                .iter()
+                .map(|h| h.total)
+                .fold(f64::NEG_INFINITY, f64::max),
             best.total,
             loop_delta,
             gate_delta
@@ -172,7 +224,10 @@ pub fn write_loop_report(
 
     let rows: Vec<&Scored> = history.iter().collect();
     md.push_str(&details(&rows));
-    md.push_str(&format!("\n---\n\nCumulative API cost: ${:.4}\n", crate::llm::total_cost_usd()));
+    md.push_str(&format!(
+        "\n---\n\nCumulative API cost: ${:.4}\n",
+        crate::llm::total_cost_usd()
+    ));
 
     let path = out_dir.join("report.md");
     std::fs::write(&path, md).with_context(|| format!("Failed to write {}", path.display()))?;

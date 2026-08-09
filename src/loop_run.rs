@@ -29,7 +29,15 @@ pub struct LoopCfg {
 
 /// Generate → score → regenerate with feedback loop.
 /// The return value is not the last iteration but the best score (argmax) across all iterations.
-pub fn run(gen_llm: &Llm, judges: &[Llm], spec: &Spec, idea: &str, out_dir: &Path, cfg: &LoopCfg, angle: &str) -> Result<LoopOutcome> {
+pub fn run(
+    gen_llm: &Llm,
+    judges: &[Llm],
+    spec: &Spec,
+    idea: &str,
+    out_dir: &Path,
+    cfg: &LoopCfg,
+    angle: &str,
+) -> Result<LoopOutcome> {
     let mut doc = generate::generate(gen_llm, spec, idea, angle)?;
     let mut history: Vec<Scored> = Vec::new();
     let mut docs: Vec<String> = Vec::new();
@@ -48,7 +56,11 @@ pub fn run(gen_llm: &Llm, judges: &[Llm], spec: &Spec, idea: &str, out_dir: &Pat
             label,
             s.total,
             s.metrics.total_chars,
-            if s.format_issues.is_empty() { String::new() } else { format!(", {} format issue(s)", s.format_issues.len()) }
+            if s.format_issues.is_empty() {
+                String::new()
+            } else {
+                format!(", {} format issue(s)", s.format_issues.len())
+            }
         );
 
         let prev_best = history.get(best_i).map(|b: &Scored| b.total);
@@ -75,7 +87,10 @@ pub fn run(gen_llm: &Llm, judges: &[Llm], spec: &Spec, idea: &str, out_dir: &Pat
             break;
         }
         if stall >= cfg.patience {
-            stop_reason = format!("Improvement stalled ({} consecutive times below +{:.1} points)", cfg.patience, cfg.min_delta);
+            stop_reason = format!(
+                "Improvement stalled ({} consecutive times below +{:.1} points)",
+                cfg.patience, cfg.min_delta
+            );
             break;
         }
         if i + 1 == cfg.max_iter.max(1) {
@@ -99,7 +114,11 @@ pub fn run(gen_llm: &Llm, judges: &[Llm], spec: &Spec, idea: &str, out_dir: &Pat
     let first = &history[0];
     let d_score = best_score.total - first.total;
     let d_chars = best_score.metrics.total_chars as f64 - first.metrics.total_chars as f64;
-    let growth = if first.metrics.total_chars > 0 { d_chars / first.metrics.total_chars as f64 } else { 0.0 };
+    let growth = if first.metrics.total_chars > 0 {
+        d_chars / first.metrics.total_chars as f64
+    } else {
+        0.0
+    };
     if growth > 0.25 && d_score < 5.0 {
         warnings.push(format!(
             "Length canary: total chars +{:.0}% but score only +{:.1} → may be padding rather than content improvement",
@@ -141,7 +160,15 @@ pub fn run(gen_llm: &Llm, judges: &[Llm], spec: &Spec, idea: &str, out_dir: &Pat
         }
     }
 
-    Ok(LoopOutcome { best_label: best_score.label.clone(), best_doc, first_doc: docs[0].clone(), best_score, history, stop_reason, warnings })
+    Ok(LoopOutcome {
+        best_label: best_score.label.clone(),
+        best_doc,
+        first_doc: docs[0].clone(),
+        best_score,
+        history,
+        stop_reason,
+        warnings,
+    })
 }
 
 /// Jaccard similarity of whitespace-based token sets (intersection/union size ratio). Implemented
@@ -168,18 +195,27 @@ mod tests {
 
     #[test]
     fn jaccard_similarity_identical_is_one() {
-        assert_eq!(jaccard_similarity("budget expense-tracker app", "budget expense-tracker app"), 1.0);
+        assert_eq!(
+            jaccard_similarity("budget expense-tracker app", "budget expense-tracker app"),
+            1.0
+        );
     }
 
     #[test]
     fn jaccard_similarity_disjoint_is_zero() {
-        assert_eq!(jaccard_similarity("budget expense-tracker", "totally different document"), 0.0);
+        assert_eq!(
+            jaccard_similarity("budget expense-tracker", "totally different document"),
+            0.0
+        );
     }
 
     #[test]
     fn jaccard_similarity_partial_overlap() {
         // {budget, expense-tracker, app} vs {budget, expense-tracker, full-edition} → intersection 2, union 4
-        let sim = jaccard_similarity("budget expense-tracker app", "budget expense-tracker full-edition");
+        let sim = jaccard_similarity(
+            "budget expense-tracker app",
+            "budget expense-tracker full-edition",
+        );
         assert!((sim - 0.5).abs() < 1e-9, "{sim}");
     }
 }

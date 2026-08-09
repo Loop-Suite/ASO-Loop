@@ -136,7 +136,12 @@ fn build_llm(cli: &Cli, model: Option<String>) -> Llm {
 
 fn judge_panel(cli: &Cli) -> Vec<Llm> {
     match &cli.judge_model {
-        Some(list) => list.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).map(|m| build_llm(cli, Some(m.to_string()))).collect(),
+        Some(list) => list
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|m| build_llm(cli, Some(m.to_string())))
+            .collect(),
         None => vec![build_llm(cli, cli.model.clone())],
     }
 }
@@ -153,13 +158,26 @@ fn real_main() -> Result<()> {
     }
 
     match &cli.cmd {
-        Cmd::Gen { spec, brief, count, out, rounds, concurrency, no_score } => {
+        Cmd::Gen {
+            spec,
+            brief,
+            count,
+            out,
+            rounds,
+            concurrency,
+            no_score,
+        } => {
             let sp = Spec::load(spec)?;
             let brief_text = read_text(brief)?;
             let out_dir = prepare_out(out)?;
             let angles = generate::angles_for(&sp, *count);
 
-            println!("Generating {} items — {} ({})", count, sp.name, sp.store.label());
+            println!(
+                "Generating {} items — {} ({})",
+                count,
+                sp.name,
+                sp.store.label()
+            );
             let items: Vec<(usize, String)> = angles.into_iter().enumerate().collect();
             let requested = items.len();
             let (docs, failed) = par_map(*concurrency, items, |(i, angle)| {
@@ -172,26 +190,59 @@ fn real_main() -> Result<()> {
             if failed > 0 {
                 eprintln!("Warning: {failed} generation(s) failed (out of {requested} requested, {} succeeded)", docs.len());
             }
-            anyhow::ensure!(!docs.is_empty(), "Generation failed: all {requested} requested item(s) failed");
+            anyhow::ensure!(
+                !docs.is_empty(),
+                "Generation failed: all {requested} requested item(s) failed"
+            );
 
             if *no_score {
-                println!("Output: {}  (cumulative ${:.4})", out_dir.display(), llm::total_cost_usd());
+                println!(
+                    "Output: {}  (cumulative ${:.4})",
+                    out_dir.display(),
+                    llm::total_cost_usd()
+                );
                 return Ok(());
             }
-            let scored = score_many(&judges, &sp, docs, *rounds, *concurrency, &out_dir, Some(&brief_text));
+            let scored = score_many(
+                &judges,
+                &sp,
+                docs,
+                *rounds,
+                *concurrency,
+                &out_dir,
+                Some(&brief_text),
+            );
             finish(&out_dir, &sp, &scored)
         }
 
-        Cmd::Score { spec, input, out, rounds, concurrency } => {
+        Cmd::Score {
+            spec,
+            input,
+            out,
+            rounds,
+            concurrency,
+        } => {
             let sp = Spec::load(spec)?;
             let out_dir = prepare_out(out)?;
             let files = collect_docs(input)?;
-            anyhow::ensure!(!files.is_empty(), "No documents to score: {}", input.display());
-            println!("Scoring {} items — {} ({})", files.len(), sp.name, sp.store.label());
+            anyhow::ensure!(
+                !files.is_empty(),
+                "No documents to score: {}",
+                input.display()
+            );
+            println!(
+                "Scoring {} items — {} ({})",
+                files.len(),
+                sp.name,
+                sp.store.label()
+            );
 
             let mut docs: Vec<(String, String)> = Vec::new();
             for f in files {
-                let label = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| f.display().to_string());
+                let label = f
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| f.display().to_string());
                 docs.push((label, read_text(&f)?));
             }
             // The score mode has no --brief to compare against, so the factual consistency check is skipped.
@@ -199,13 +250,37 @@ fn real_main() -> Result<()> {
             finish(&out_dir, &sp, &scored)
         }
 
-        Cmd::Loop { spec, brief, out, target, max_iter, rounds, min_delta, patience, angle, gate_model } => {
+        Cmd::Loop {
+            spec,
+            brief,
+            out,
+            target,
+            max_iter,
+            rounds,
+            min_delta,
+            patience,
+            angle,
+            gate_model,
+        } => {
             let sp = Spec::load(spec)?;
             let brief_text = read_text(brief)?;
             let out_dir = prepare_out(out)?;
-            let angle = if angle.is_empty() { generate::angles_for(&sp, 1).remove(0) } else { angle.clone() };
-            let cfg = loop_run::LoopCfg { target: *target, max_iter: *max_iter, rounds: *rounds, min_delta: *min_delta, patience: *patience };
-            println!("Loop started — target {:.0} points, max {} iterations", target, max_iter);
+            let angle = if angle.is_empty() {
+                generate::angles_for(&sp, 1).remove(0)
+            } else {
+                angle.clone()
+            };
+            let cfg = loop_run::LoopCfg {
+                target: *target,
+                max_iter: *max_iter,
+                rounds: *rounds,
+                min_delta: *min_delta,
+                patience: *patience,
+            };
+            println!(
+                "Loop started — target {:.0} points, max {} iterations",
+                target, max_iter
+            );
             let r = loop_run::run(&gen_llm, &judges, &sp, &brief_text, &out_dir, &cfg, &angle)?;
 
             // held-out gate: re-score only the first draft and the best draft using a model that did not participate in the loop
@@ -213,14 +288,28 @@ fn real_main() -> Result<()> {
             if let Some(gm) = gate_model {
                 println!("held-out validation ({gm})…");
                 let g = vec![build_llm(&cli, Some(gm.clone()))];
-                let f = score::score_doc(&g, &sp, "gate-first", &r.first_doc, 1, Some(&brief_text))?;
+                let f =
+                    score::score_doc(&g, &sp, "gate-first", &r.first_doc, 1, Some(&brief_text))?;
                 let b = score::score_doc(&g, &sp, "gate-best", &r.best_doc, 1, Some(&brief_text))?;
-                println!("  first draft {:.1} → best draft {:.1} (held-out)", f.total, b.total);
+                println!(
+                    "  first draft {:.1} → best draft {:.1} (held-out)",
+                    f.total, b.total
+                );
                 gate_pair = Some((f, b));
             }
 
-            let path = report::write_loop_report(&out_dir, &sp, &r.history, &r.stop_reason, &r.warnings, gate_pair.as_ref().map(|(f, b)| (f, b)))?;
-            println!("\nFinished: {} · best {:.1}/100 ({})", r.stop_reason, r.best_score.total, r.best_label);
+            let path = report::write_loop_report(
+                &out_dir,
+                &sp,
+                &r.history,
+                &r.stop_reason,
+                &r.warnings,
+                gate_pair.as_ref().map(|(f, b)| (f, b)),
+            )?;
+            println!(
+                "\nFinished: {} · best {:.1}/100 ({})",
+                r.stop_reason, r.best_score.total, r.best_label
+            );
             for w in &r.warnings {
                 println!("  ⚠ {}", w);
             }
@@ -236,7 +325,11 @@ fn finish(out_dir: &Path, sp: &Spec, scored: &[Scored]) -> Result<()> {
     anyhow::ensure!(!scored.is_empty(), "No documents were successfully scored");
     let path = report::write_report(out_dir, sp, scored)?;
     let mut ranked: Vec<&Scored> = scored.iter().collect();
-    ranked.sort_by(|a, b| b.total.partial_cmp(&a.total).unwrap_or(std::cmp::Ordering::Equal));
+    ranked.sort_by(|a, b| {
+        b.total
+            .partial_cmp(&a.total)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     println!("\nRanking");
     for (i, s) in ranked.iter().enumerate() {
         println!("  {}. {} — {:.1}/100", i + 1, s.label, s.total);
@@ -246,7 +339,15 @@ fn finish(out_dir: &Path, sp: &Spec, scored: &[Scored]) -> Result<()> {
     Ok(())
 }
 
-fn score_many(judges: &[Llm], sp: &Spec, docs: Vec<(String, String)>, rounds: usize, concurrency: usize, out_dir: &Path, brief: Option<&str>) -> Vec<Scored> {
+fn score_many(
+    judges: &[Llm],
+    sp: &Spec,
+    docs: Vec<(String, String)>,
+    rounds: usize,
+    concurrency: usize,
+    out_dir: &Path,
+    brief: Option<&str>,
+) -> Vec<Scored> {
     let requested = docs.len();
     let (scored, failed) = par_map(concurrency, docs, |(label, doc)| {
         let s = score::score_doc(judges, sp, &label, &doc, rounds, brief)?;
@@ -254,7 +355,10 @@ fn score_many(judges: &[Llm], sp: &Spec, docs: Vec<(String, String)>, rounds: us
         Ok(s)
     });
     if failed > 0 {
-        eprintln!("Warning: {failed} scoring(s) failed (out of {requested} requested, {} succeeded)", scored.len());
+        eprintln!(
+            "Warning: {failed} scoring(s) failed (out of {requested} requested, {} succeeded)",
+            scored.len()
+        );
     }
     for s in &scored {
         if let Err(e) = report::append_jsonl(out_dir, s) {
@@ -283,7 +387,10 @@ where
             let handles: Vec<_> = chunk.into_iter().map(|item| s.spawn(|| f(item))).collect();
             handles
                 .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("worker thread panicked"))))
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("worker thread panicked")))
+                })
                 .collect()
         });
         for r in results {
@@ -304,7 +411,8 @@ fn read_text(p: &Path) -> Result<String> {
 }
 
 fn prepare_out(p: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(p).with_context(|| format!("Failed to create output directory: {}", p.display()))?;
+    std::fs::create_dir_all(p)
+        .with_context(|| format!("Failed to create output directory: {}", p.display()))?;
     Ok(p.to_path_buf())
 }
 
@@ -315,7 +423,13 @@ fn collect_docs(input: &Path) -> Result<Vec<PathBuf>> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(input)
         .with_context(|| format!("Failed to read directory: {}", input.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_file() && p.extension().map(|e| e == "md" || e == "txt").unwrap_or(false) && p.file_name().map(|n| n != "report.md").unwrap_or(true))
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .map(|e| e == "md" || e == "txt")
+                    .unwrap_or(false)
+                && p.file_name().map(|n| n != "report.md").unwrap_or(true)
+        })
         .collect();
     v.sort();
     Ok(v)

@@ -121,7 +121,12 @@ impl Spec {
             .banned_terms
             .iter()
             .map(|s| s.as_str())
-            .filter(|p| regex::RegexBuilder::new(p).case_insensitive(true).build().is_err())
+            .filter(|p| {
+                regex::RegexBuilder::new(p)
+                    .case_insensitive(true)
+                    .build()
+                    .is_err()
+            })
             .collect();
         anyhow::ensure!(
             bad.is_empty(),
@@ -147,7 +152,10 @@ impl Spec {
         self.sections
             .iter()
             .map(|s| {
-                let mut line = format!("## {}\n- Writing guide: {}\n- Max {} chars", s.title, s.guide, s.max_chars);
+                let mut line = format!(
+                    "## {}\n- Writing guide: {}\n- Max {} chars",
+                    s.title, s.guide, s.max_chars
+                );
                 if s.min_chars > 0 {
                     line.push_str(&format!(" (recommended {} chars or more)", s.min_chars));
                 }
@@ -194,14 +202,19 @@ mod tests {
     use std::path::PathBuf;
 
     fn spec_path(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("specs").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("specs")
+            .join(name)
     }
 
     #[test]
     fn example_apple_spec_loads_and_normalizes() {
         let sp = Spec::load(&spec_path("example-apple.toml")).expect("failed to load apple spec");
         assert_eq!(sp.store, Store::Apple);
-        assert!(sp.sections.iter().any(|s| s.id == "keywords" && s.max_chars == 100));
+        assert!(sp
+            .sections
+            .iter()
+            .any(|s| s.id == "keywords" && s.max_chars == 100));
         assert!((sp.weight_sum() - 100.0).abs() < 1e-9);
     }
 
@@ -209,7 +222,10 @@ mod tests {
     fn example_google_spec_loads_and_normalizes() {
         let sp = Spec::load(&spec_path("example-google.toml")).expect("failed to load google spec");
         assert_eq!(sp.store, Store::Google);
-        assert!(sp.sections.iter().any(|s| s.id == "short_description" && s.max_chars == 80));
+        assert!(sp
+            .sections
+            .iter()
+            .any(|s| s.id == "short_description" && s.max_chars == 80));
         assert!((sp.weight_sum() - 100.0).abs() < 1e-9);
     }
 }

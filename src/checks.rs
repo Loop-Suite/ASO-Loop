@@ -36,7 +36,10 @@ pub struct Metrics {
 /// Normalization for heading comparison: keep only alphanumerics and lowercase them (the LLM may
 /// emit different casing like `## Title`/`## TITLE`, so match case-insensitively).
 fn norm_head(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_lowercase()
 }
 
 /// Splits into (heading, body) pairs based on headings starting with `#`. (Reuses bizplan-loop's structure)
@@ -72,7 +75,10 @@ pub fn field_bodies(spec: &Spec, doc: &str) -> BTreeMap<String, String> {
         // Match only on exact equality (after alphanumeric + case normalization). Previously this used a
         // bidirectional substring containment check, which had a bug where field names could collide —
         // e.g. "Subtitle" literally contains "Title" as a substring — causing matches on the wrong field.
-        if let Some((_, body)) = secs.iter().find(|(h, _)| !h.is_empty() && norm_head(h) == want) {
+        if let Some((_, body)) = secs
+            .iter()
+            .find(|(h, _)| !h.is_empty() && norm_head(h) == want)
+        {
             map.insert(s.id.clone(), body.trim().to_string());
         }
     }
@@ -107,9 +113,19 @@ pub fn sanitize_keywords(input: &[String]) -> Vec<String> {
 pub fn normalize_text_for_match(text: &str) -> String {
     let replaced: String = text
         .chars()
-        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
-    replaced.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+    replaced
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 // ---- ASO domain checks ----
@@ -151,7 +167,11 @@ pub fn metrics(spec: &Spec, doc: &str) -> Metrics {
 /// Apple automatically dedups title+subtitle+keywords when indexing, so placing the same keyword
 /// in multiple fields just wastes character count.
 fn duplicate_keywords_across_fields(spec: &Spec, bodies: &BTreeMap<String, String>) -> Vec<String> {
-    let targets: Vec<&Section> = spec.sections.iter().filter(|s| s.keyword_dedup_target).collect();
+    let targets: Vec<&Section> = spec
+        .sections
+        .iter()
+        .filter(|s| s.keyword_dedup_target)
+        .collect();
     if targets.len() < 2 {
         return Vec::new();
     }
@@ -169,7 +189,11 @@ fn duplicate_keywords_across_fields(spec: &Spec, bodies: &BTreeMap<String, Strin
             }
         }
     }
-    let mut dups: Vec<String> = token_field_count.into_iter().filter(|(_, n)| *n >= 2).map(|(t, _)| t).collect();
+    let mut dups: Vec<String> = token_field_count
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .map(|(t, _)| t)
+        .collect();
     dups.sort();
     dups
 }
@@ -196,11 +220,22 @@ fn default_superlative_patterns() -> &'static [&'static str] {
 }
 
 fn default_price_patterns() -> &'static [&'static str] {
-    &[r"\$\s*\d", r"\d+\s*%\s*(off|할인)", r"무료\s*체험", r"무료\s*다운로드", r"세일", r"특가", r"이벤트가"]
+    &[
+        r"\$\s*\d",
+        r"\d+\s*%\s*(off|할인)",
+        r"무료\s*체험",
+        r"무료\s*다운로드",
+        r"세일",
+        r"특가",
+        r"이벤트가",
+    ]
 }
 
 fn compile_all(patterns: &[&str]) -> Vec<Regex> {
-    patterns.iter().filter_map(|p| RegexBuilder::new(p).case_insensitive(true).build().ok()).collect()
+    patterns
+        .iter()
+        .filter_map(|p| RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .collect()
 }
 
 /// Collects source-text snippets matching the spec's competitor/trademark patterns plus the default superlative/price patterns.
@@ -233,8 +268,8 @@ fn banned_hits(spec: &Spec, text: &str) -> Vec<String> {
 /// treat it as a reference signal for a human to make the final call.
 fn default_claim_patterns() -> &'static [&'static str] {
     &[
-        r"\d[\d,]*\s*(만|천|억)?\s*\+",  // numeric claims like "10만+", "50,000+"
-        r"\d+\s*위",                      // ranking claims like "1위"
+        r"\d[\d,]*\s*(만|천|억)?\s*\+", // numeric claims like "10만+", "50,000+"
+        r"\d+\s*위",                    // ranking claims like "1위"
         r"다운로드",
         r"수상",
         r"최초",
@@ -292,7 +327,10 @@ pub fn format_issues(spec: &Spec, doc: &str, brief: Option<&str>) -> Vec<String>
     let bodies = field_bodies(spec, doc);
 
     for m in missing_required(spec, doc) {
-        issues.push(format!("Required field '{}' missing → needs to be filled in", m));
+        issues.push(format!(
+            "Required field '{}' missing → needs to be filled in",
+            m
+        ));
     }
 
     for s in &spec.sections {
@@ -342,7 +380,12 @@ pub fn format_issues(spec: &Spec, doc: &str, brief: Option<&str>) -> Vec<String>
         ));
     }
     if !spec.target_keywords.is_empty() && m.keyword_coverage < m.keyword_total {
-        let missing: Vec<&str> = spec.target_keywords.iter().filter(|k| !m.matched_keywords.contains(k)).map(|s| s.as_str()).collect();
+        let missing: Vec<&str> = spec
+            .target_keywords
+            .iter()
+            .filter(|k| !m.matched_keywords.contains(k))
+            .map(|s| s.as_str())
+            .collect();
         issues.push(format!(
             "target keyword coverage {}/{} → not covered: {}",
             m.keyword_coverage,
@@ -351,7 +394,10 @@ pub fn format_issues(spec: &Spec, doc: &str, brief: Option<&str>) -> Vec<String>
         ));
     }
     if m.emoji_count > spec.emoji_max {
-        issues.push(format!("{} emoji used (allowed {}) → excessive emoji may be perceived as spam, reduce usage", m.emoji_count, spec.emoji_max));
+        issues.push(format!(
+            "{} emoji used (allowed {}) → excessive emoji may be perceived as spam, reduce usage",
+            m.emoji_count, spec.emoji_max
+        ));
     }
     for h in &m.banned_hits {
         issues.push(format!("banned expression detected — {} → needs to be replaced (trademark/false-advertising risk)", h));
@@ -374,8 +420,15 @@ mod tests {
 
     #[test]
     fn sanitize_keywords_dedups_case_insensitively() {
-        let v = vec!["Budget".to_string(), " budget ".to_string(), "Tracker".to_string()];
-        assert_eq!(sanitize_keywords(&v), vec!["budget".to_string(), "tracker".to_string()]);
+        let v = vec![
+            "Budget".to_string(),
+            " budget ".to_string(),
+            "Tracker".to_string(),
+        ];
+        assert_eq!(
+            sanitize_keywords(&v),
+            vec!["budget".to_string(), "tracker".to_string()]
+        );
     }
 
     fn test_spec() -> Spec {
@@ -391,10 +444,31 @@ mod tests {
             angles: vec![],
             bands: vec![],
             sections: vec![
-                Section { id: "title".into(), title: "Title".into(), guide: String::new(), max_chars: 10, min_chars: 0, required: true, keyword_dedup_target: true },
-                Section { id: "subtitle".into(), title: "Subtitle".into(), guide: String::new(), max_chars: 10, min_chars: 0, required: true, keyword_dedup_target: true },
+                Section {
+                    id: "title".into(),
+                    title: "Title".into(),
+                    guide: String::new(),
+                    max_chars: 10,
+                    min_chars: 0,
+                    required: true,
+                    keyword_dedup_target: true,
+                },
+                Section {
+                    id: "subtitle".into(),
+                    title: "Subtitle".into(),
+                    guide: String::new(),
+                    max_chars: 10,
+                    min_chars: 0,
+                    required: true,
+                    keyword_dedup_target: true,
+                },
             ],
-            criteria: vec![Criterion { id: "x".into(), name: "x".into(), weight: 1.0, guide: String::new() }],
+            criteria: vec![Criterion {
+                id: "x".into(),
+                name: "x".into(),
+                weight: 1.0,
+                guide: String::new(),
+            }],
         }
     }
 
@@ -404,8 +478,12 @@ mod tests {
         // title exceeds 10 chars, subtitle missing, only 1 of 2 keywords covered, contains banned term 뱅크샐러드
         let doc = "## Title\n가계부 지출관리 완전정복판\n";
         let issues = format_issues(&spec, doc, None);
-        assert!(issues.iter().any(|i| i.contains("Title") && i.contains("exceeds")));
-        assert!(issues.iter().any(|i| i.contains("Subtitle") && i.contains("missing")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("Title") && i.contains("exceeds")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("Subtitle") && i.contains("missing")));
     }
 
     #[test]
@@ -421,7 +499,12 @@ mod tests {
         let spec = test_spec();
         let doc = "## Title\n뱅크샐러드 대비 더 쉬운 가계부\n## Subtitle\n간편 가계부\n";
         let issues = format_issues(&spec, doc, None);
-        assert!(issues.iter().any(|i| i.contains("banned expression") && i.contains("뱅크샐러드")), "{issues:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("banned expression") && i.contains("뱅크샐러드")),
+            "{issues:?}"
+        );
     }
 
     #[test]
@@ -434,7 +517,12 @@ mod tests {
         let doc = "## Title\n가계부\n## Subtitle\n누적 10만+ 다운로드 달성\n";
         let brief = "간편한 가계부 앱. 지출을 자동으로 분류해준다.";
         let issues = factual_claim_issues(doc, Some(brief));
-        assert!(issues.iter().any(|i| i.contains("factual consistency") && i.contains("10만")), "{issues:?}");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("factual consistency") && i.contains("10만")),
+            "{issues:?}"
+        );
     }
 
     #[test]
@@ -456,11 +544,21 @@ mod tests {
         let spec = test_spec(); // title max_chars = 10
         let ok_doc = "## Title\n1234567890\n## Subtitle\nab\n"; // exactly 10 chars
         let issues_ok = format_issues(&spec, ok_doc, None);
-        assert!(!issues_ok.iter().any(|i| i.contains("Title") && i.contains("exceeds")), "{issues_ok:?}");
+        assert!(
+            !issues_ok
+                .iter()
+                .any(|i| i.contains("Title") && i.contains("exceeds")),
+            "{issues_ok:?}"
+        );
 
         let over_doc = "## Title\n12345678901\n## Subtitle\nab\n"; // 11 chars
         let issues_over = format_issues(&spec, over_doc, None);
-        assert!(issues_over.iter().any(|i| i.contains("Title") && i.contains("exceeds")), "{issues_over:?}");
+        assert!(
+            issues_over
+                .iter()
+                .any(|i| i.contains("Title") && i.contains("exceeds")),
+            "{issues_over:?}"
+        );
     }
 
     #[test]

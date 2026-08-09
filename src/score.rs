@@ -149,7 +149,14 @@ fn trimmed_mean(v: &[f64]) -> f64 {
 
 /// Scores a single document. Repeats `rounds` times, rotating model and lens.
 /// `brief` is used for brief-vs-copy factual consistency checks (Some in gen/loop mode, None in score mode).
-pub fn score_doc(judges: &[Llm], spec: &Spec, label: &str, doc: &str, rounds: usize, brief: Option<&str>) -> Result<Scored> {
+pub fn score_doc(
+    judges: &[Llm],
+    spec: &Spec,
+    label: &str,
+    doc: &str,
+    rounds: usize,
+    brief: Option<&str>,
+) -> Result<Scored> {
     anyhow::ensure!(!judges.is_empty(), "No judge models available");
     let rounds = rounds.max(1);
     let schema = judge_schema(spec);
@@ -160,8 +167,11 @@ pub fn score_doc(judges: &[Llm], spec: &Spec, label: &str, doc: &str, rounds: us
         let llm = &judges[i % judges.len()];
         let lens = LENSES[i % LENSES.len()];
         let prompt = build_judge_prompt(spec, doc, lens);
-        let v = llm.json(&prompt, Some(JUDGE_SYSTEM), &schema).with_context(|| format!("Scoring failed ({label}, round {})", i + 1))?;
-        let jr: JudgeResult = serde_json::from_value(v).with_context(|| format!("Score result schema mismatch ({label})"))?;
+        let v = llm
+            .json(&prompt, Some(JUDGE_SYSTEM), &schema)
+            .with_context(|| format!("Scoring failed ({label}, round {})", i + 1))?;
+        let jr: JudgeResult = serde_json::from_value(v)
+            .with_context(|| format!("Score result schema mismatch ({label})"))?;
         results.push(jr);
         models.push(llm.label());
     }
@@ -170,7 +180,11 @@ pub fn score_doc(judges: &[Llm], spec: &Spec, label: &str, doc: &str, rounds: us
     let mut raw: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     let mut spread: BTreeMap<String, f64> = BTreeMap::new();
     for c in &spec.criteria {
-        let vals: Vec<f64> = results.iter().filter_map(|r| r.criteria.iter().find(|x| x.id == c.id)).map(|x| x.score.clamp(0.0, 100.0)).collect();
+        let vals: Vec<f64> = results
+            .iter()
+            .filter_map(|r| r.criteria.iter().find(|x| x.id == c.id))
+            .map(|x| x.score.clamp(0.0, 100.0))
+            .collect();
         let lo = vals.iter().cloned().fold(f64::INFINITY, f64::min);
         let hi = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         spread.insert(c.id.clone(), if vals.is_empty() { 0.0 } else { hi - lo });
@@ -179,7 +193,11 @@ pub fn score_doc(judges: &[Llm], spec: &Spec, label: &str, doc: &str, rounds: us
     }
 
     let wsum = spec.weight_sum();
-    let total: f64 = spec.criteria.iter().map(|c| per_criterion.get(&c.id).copied().unwrap_or(0.0) * (c.weight / wsum)).sum();
+    let total: f64 = spec
+        .criteria
+        .iter()
+        .map(|c| per_criterion.get(&c.id).copied().unwrap_or(0.0) * (c.weight / wsum))
+        .sum();
 
     let format_issues = checks::format_issues(spec, doc, brief);
     let missing = checks::missing_required(spec, doc);
@@ -242,9 +260,22 @@ pub fn feedback_text(s: &Scored) -> String {
 
 /// The 2 lowest-scoring items.
 pub fn weak_points(spec: &Spec, s: &Scored) -> String {
-    let mut v: Vec<(&str, f64)> = spec.criteria.iter().map(|c| (c.name.as_str(), s.per_criterion.get(&c.id).copied().unwrap_or(0.0))).collect();
+    let mut v: Vec<(&str, f64)> = spec
+        .criteria
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                s.per_criterion.get(&c.id).copied().unwrap_or(0.0),
+            )
+        })
+        .collect();
     v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    v.iter().take(2).map(|(n, sc)| format!("- {} : {:.0}/100", n, sc)).collect::<Vec<_>>().join("\n")
+    v.iter()
+        .take(2)
+        .map(|(n, sc)| format!("- {} : {:.0}/100", n, sc))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

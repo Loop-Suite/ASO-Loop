@@ -12,14 +12,31 @@ like 'best/No.1/only', or pricing/discount language.";
 pub fn build_prompt(spec: &Spec, idea: &str, angle: &str) -> String {
     let mut p = String::new();
     p.push_str("# Task\nWrite a draft of the app store listing copy according to the store specifications below.\n\n");
-    p.push_str(&format!("## Target Store: {}\n## App: {}\n{}\n\n", spec.store.label(), spec.name, spec.context));
+    p.push_str(&format!(
+        "## Target Store: {}\n## App: {}\n{}\n\n",
+        spec.store.label(),
+        spec.name,
+        spec.context
+    ));
     if !angle.is_empty() {
-        p.push_str(&format!("## Differentiation Angle for This Draft\n{}\n\n", angle));
+        p.push_str(&format!(
+            "## Differentiation Angle for This Draft\n{}\n\n",
+            angle
+        ));
     }
     p.push_str(&format!("## App Overview Material\n{}\n\n", idea));
-    p.push_str(&format!("## Target Keywords (reflect as naturally as possible)\n{}\n\n", spec.keywords_prompt()));
-    p.push_str(&format!("## Fields to Write\n{}\n\n", spec.sections_prompt()));
-    p.push_str(&format!("## Review Criteria (keep these in mind while writing)\n{}\n\n", spec.rubric_prompt()));
+    p.push_str(&format!(
+        "## Target Keywords (reflect as naturally as possible)\n{}\n\n",
+        spec.keywords_prompt()
+    ));
+    p.push_str(&format!(
+        "## Fields to Write\n{}\n\n",
+        spec.sections_prompt()
+    ));
+    p.push_str(&format!(
+        "## Review Criteria (keep these in mind while writing)\n{}\n\n",
+        spec.rubric_prompt()
+    ));
     p.push_str(
         "## Output Rules\n\
          - Output in markdown. Use the exact field name as a `## FieldName` heading, and write only the body text below it.\n\
@@ -32,19 +49,42 @@ pub fn build_prompt(spec: &Spec, idea: &str, angle: &str) -> String {
 }
 
 /// Regeneration prompt reflecting scoring feedback.
-pub fn build_revise_prompt(spec: &Spec, idea: &str, prev_doc: &str, feedback: &str, weak: &str) -> String {
+pub fn build_revise_prompt(
+    spec: &Spec,
+    idea: &str,
+    prev_doc: &str,
+    feedback: &str,
+    weak: &str,
+) -> String {
     let mut p = String::new();
     p.push_str("# Task\nImprove the listing copy draft below according to the review feedback and output the full revised text.\n\n");
-    p.push_str(&format!("## Target Store: {}\n## App: {}\n{}\n\n", spec.store.label(), spec.name, spec.context));
+    p.push_str(&format!(
+        "## Target Store: {}\n## App: {}\n{}\n\n",
+        spec.store.label(),
+        spec.name,
+        spec.context
+    ));
     p.push_str(&format!("## App Overview Material\n{}\n\n", idea));
     p.push_str(&format!("## Current Draft\n{}\n\n", prev_doc));
-    p.push_str(&format!("## Review Feedback (must be reflected)\n{}\n\n", feedback));
+    p.push_str(&format!(
+        "## Review Feedback (must be reflected)\n{}\n\n",
+        feedback
+    ));
     if !weak.is_empty() {
-        p.push_str(&format!("## Items with Particularly Low Scores\n{}\n\n", weak));
+        p.push_str(&format!(
+            "## Items with Particularly Low Scores\n{}\n\n",
+            weak
+        ));
     }
-    p.push_str(&format!("## Target Keywords\n{}\n\n", spec.keywords_prompt()));
+    p.push_str(&format!(
+        "## Target Keywords\n{}\n\n",
+        spec.keywords_prompt()
+    ));
     p.push_str(&format!("## Review Criteria\n{}\n\n", spec.rubric_prompt()));
-    p.push_str(&format!("## Field Structure and Character Limits to Maintain\n{}\n\n", spec.sections_prompt()));
+    p.push_str(&format!(
+        "## Field Structure and Character Limits to Maintain\n{}\n\n",
+        spec.sections_prompt()
+    ));
     p.push_str(
         "## Output Rules\n\
          - Output the entire improved document in markdown. No summary of changes or meta-commentary.\n\
@@ -61,7 +101,14 @@ pub fn generate(llm: &Llm, spec: &Spec, idea: &str, angle: &str) -> Result<Strin
     llm.text(&prompt, Some(SYSTEM))
 }
 
-pub fn revise(llm: &Llm, spec: &Spec, idea: &str, prev_doc: &str, feedback: &str, weak: &str) -> Result<String> {
+pub fn revise(
+    llm: &Llm,
+    spec: &Spec,
+    idea: &str,
+    prev_doc: &str,
+    feedback: &str,
+    weak: &str,
+) -> Result<String> {
     let prompt = build_revise_prompt(spec, idea, prev_doc, feedback, weak);
     llm.text(&prompt, Some(SYSTEM))
 }
@@ -76,6 +123,10 @@ pub fn angles_for(spec: &Spec, n: usize) -> Vec<String> {
         "Avoid translationese and prioritize expressions that feel natural to local users.",
         "Prioritize conciseness and readability, keeping keyword density low.",
     ];
-    let pool: Vec<String> = if spec.angles.is_empty() { defaults.iter().map(|s| s.to_string()).collect() } else { spec.angles.clone() };
+    let pool: Vec<String> = if spec.angles.is_empty() {
+        defaults.iter().map(|s| s.to_string()).collect()
+    } else {
+        spec.angles.clone()
+    };
     (0..n).map(|i| pool[i % pool.len()].clone()).collect()
 }
