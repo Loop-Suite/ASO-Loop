@@ -1,0 +1,29 @@
+aso-loop
+Copyright 2026 kimdzhekhon
+
+This software is distributed under the Apache License 2.0.
+
+## Architecture provenance
+
+This project's CLI structure, `claude -p` subprocess backend (`src/llm.rs`), loop/gate
+logic (`src/loop_run.rs`), and report format (`src/report.rs`) are a port of the
+architecture from `Loop-Suite/bizplan-loop` (Apache-2.0), adapted to the ASO domain.
+
+## Ported open-source logic
+
+### semihcihan/App-Store-Optimization-CLI (MIT)
+https://github.com/semihcihan/App-Store-Optimization-CLI
+
+`src/checks.rs::normalize_keyword()` / `sanitize_keywords()` / `normalize_text_for_match()`
+were rewritten in Rust based on the logic of this repository's `cli/domain/keywords/policy.ts`
+(`normalizeKeyword`, `sanitizeKeywords`) and `cli/shared/aso-keyword-utils.ts`
+(`normalizeTextForKeywordMatch`). The original TypeScript code was not copied directly —
+only the algorithm was ported. The original uses `.normalize("NFKC")` plus a Unicode regex
+(`\p{L}\p{N}\p{M}`), but this project approximates it with `char::is_alphanumeric()`
+instead of adding the `unicode-normalization` crate (not a full NFKC equivalent — see the
+README "Spec" section).
+
+### Repository not referenced
+
+`furkancingoz/aso-skill` has no stated license (NOASSERTION, default copyright protection
+applies), so its code was not referenced at all.

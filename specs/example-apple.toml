@@ -1,0 +1,99 @@
+name = "MoneyFlow — Household Budget App (Apple App Store example spec)"
+store = "apple"
+context = """
+An automatic household budgeting app targeting single-person households and freelancers. Its
+core feature is automatic categorization via bank/card account linking, and its point of
+differentiation versus competing apps is visualizing spending patterns without manual entry.
+"""
+scoring_source = "Weights use the aso-loop default rubric as-is (keyword relevance 0.30 / conversion copy 0.25 / localization quality 0.15 / readability & anti-stuffing 0.15 / policy compliance 0.15)."
+
+target_keywords = ["budget tracker", "auto budget tracker", "expense tracker", "budget management", "card transactions", "spending patterns"]
+
+# Competitor app names/trademarks vary by project — replace this list before actual use.
+# This is a regex, so multiple terms can be combined with | (matching is case-insensitive).
+banned_terms = ["Banksalad", "Toss\\s*budget", "Broccoli"]
+
+emoji_max = 2
+
+angles = [
+  "Foreground automatic categorization and ease of account linking.",
+  "Foreground spending visualization and insight features.",
+  "Foreground the empathy points that resonate with single-person households and freelancers.",
+]
+
+# Apple App Store's 4 field types. keywords' max_chars=100 is a character count per the
+# App Store Connect docs, but whether it's actually measured in characters or bytes is
+# uncertain (this can matter especially in multi-byte character environments) — direct
+# verification via App Store Connect is recommended. checks.rs raises a separate
+# [uncertain] warning when usage approaches 90%.
+
+[[sections]]
+id = "title"
+title = "Title"
+guide = "The field with the highest search weight. Brand name + 1-2 core feature keywords."
+max_chars = 30
+min_chars = 15
+required = true
+keyword_dedup_target = true
+
+[[sections]]
+id = "subtitle"
+title = "Subtitle"
+guide = "Core feature/benefit keywords that didn't fit in the title. Avoid overlapping with the title."
+max_chars = 30
+min_chars = 15
+required = true
+keyword_dedup_target = true
+
+[[sections]]
+id = "keywords"
+title = "Keywords"
+guide = "Comma-separated keyword field (not shown to users). Don't repeat words already used in title/subtitle (auto dedup)."
+max_chars = 100
+required = true
+keyword_dedup_target = true
+
+[[sections]]
+id = "promo_text"
+title = "Promotional Text"
+guide = "Promotional copy that can be swapped anytime without an app update. Suited to event/seasonal messaging."
+max_chars = 170
+required = false
+
+[[sections]]
+id = "description"
+title = "Description"
+guide = "Detailed feature description. The first 3 lines (about 170 characters) show without a 'more' expansion, so place the core value proposition up front."
+max_chars = 4000
+min_chars = 800
+required = true
+
+[[criteria]]
+id = "keyword_relevance"
+name = "Keyword relevance"
+weight = 30
+guide = "Are target_keywords reflected naturally, and does search intent match actual functionality?"
+
+[[criteria]]
+id = "conversion_copy"
+name = "Conversion copy"
+weight = 25
+guide = "Hook strength and benefit delivery that actually drives taps/installs from search results and the detail page"
+
+[[criteria]]
+id = "localization_quality"
+name = "Localization quality"
+weight = 15
+guide = "Natural, idiomatic phrasing (no translationese), matching the target audience's vocabulary"
+
+[[criteria]]
+id = "readability_no_stuffing"
+name = "Readability & anti-stuffing"
+weight = 15
+guide = "Reads naturally without cramming in keywords; smooth sentence flow"
+
+[[criteria]]
+id = "compliance"
+name = "Policy compliance"
+weight = 15
+guide = "No review-rejection risk from trademark issues, exaggerated claims, pricing copy, etc. (formal banned-term checks are handled by the automated check, so evaluate content risk here)"
