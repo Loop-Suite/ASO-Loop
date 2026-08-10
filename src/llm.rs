@@ -182,10 +182,10 @@ impl Llm {
                 Err(e) => {
                     if self.verbose {
                         eprintln!(
-                            "[{} retry {}/{}] {}",
+                            "[{} attempt {}/{}] {}",
                             what,
                             attempt + 1,
-                            self.retries,
+                            self.retries + 1,
                             truncate(&format!("{e:#}"), 200)
                         );
                     }
