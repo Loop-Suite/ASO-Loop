@@ -204,37 +204,58 @@ fn is_emoji(c: char) -> bool {
     )
 }
 
-fn default_superlative_patterns() -> &'static [&'static str] {
-    &[
-        r"\bbest\b",
-        r"\btop\s*1\b",
-        r"#\s*1\b",
-        r"\bno\.?\s*1\b",
-        r"1\s*위",
-        r"최고",
-        r"최초",
-        r"유일",
-        r"업계\s*1위",
-        r"가장\s*(좋은|빠른|정확한)",
+/// Wraps a bare Korean word so it only matches as a standalone token, not as a substring
+/// prefix/suffix of an unrelated longer compound word. The `regex` crate's `\b` doesn't help
+/// here: Hangul syllables are themselves Unicode "word" characters, so there's never a
+/// word/non-word transition between two adjacent syllables — `\b최고\b` would still match
+/// inside "최고급" (premium-grade) or "최고치" (all-time high) as freely as no boundary at
+/// all. This instead requires a non-Hangul character (space, punctuation, digit, start/end of
+/// text) on both sides. Trade-off: a directly-attached particle (e.g. "세일을") is no longer
+/// matched either, but that's the right precision/recall call for a banned-term gate — a
+/// missed detection is silent, while a false positive rejects compliant copy outright.
+fn bare_korean_word(word: &str) -> String {
+    format!(r"(?:^|[^가-힣]){}(?:[^가-힣]|$)", word)
+}
+
+fn default_superlative_patterns() -> Vec<String> {
+    vec![
+        r"\bbest\b".to_string(),
+        r"\btop\s*1\b".to_string(),
+        r"#\s*1\b".to_string(),
+        r"\bno\.?\s*1\b".to_string(),
+        // Plain `1\s*위` (no leading guard) matches the "1위" tail of any larger number, e.g.
+        // "31위" (ranked 31st) or "101위" — falsely flagging an ordinary rank statement as a
+        // "we're #1" superlative claim. Require the leading `1` not be preceded by another digit.
+        r"(?:^|[^가-힣0-9])1\s*위(?:[^가-힣]|$)".to_string(),
+        bare_korean_word("최고"),
+        bare_korean_word("최초"),
+        bare_korean_word("유일"),
+        r"업계\s*1위".to_string(),
+        r"가장\s*(좋은|빠른|정확한)".to_string(),
     ]
 }
 
-fn default_price_patterns() -> &'static [&'static str] {
-    &[
-        r"\$\s*\d",
-        r"\d+\s*%\s*(off|할인)",
-        r"무료\s*체험",
-        r"무료\s*다운로드",
-        r"세일",
-        r"특가",
-        r"이벤트가",
+fn default_price_patterns() -> Vec<String> {
+    vec![
+        r"\$\s*\d".to_string(),
+        r"\d+\s*%\s*(off|할인)".to_string(),
+        r"무료\s*체험".to_string(),
+        r"무료\s*다운로드".to_string(),
+        bare_korean_word("세일"),
+        bare_korean_word("특가"),
+        r"이벤트가".to_string(),
     ]
 }
 
-fn compile_all(patterns: &[&str]) -> Vec<Regex> {
+fn compile_all<S: AsRef<str>>(patterns: &[S]) -> Vec<Regex> {
     patterns
         .iter()
-        .filter_map(|p| RegexBuilder::new(p).case_insensitive(true).build().ok())
+        .filter_map(|p| {
+            RegexBuilder::new(p.as_ref())
+                .case_insensitive(true)
+                .build()
+                .ok()
+        })
         .collect()
 }
 
@@ -242,8 +263,8 @@ fn compile_all(patterns: &[&str]) -> Vec<Regex> {
 fn banned_hits(spec: &Spec, text: &str) -> Vec<String> {
     static SUPER_RE: OnceLock<Vec<Regex>> = OnceLock::new();
     static PRICE_RE: OnceLock<Vec<Regex>> = OnceLock::new();
-    let super_res = SUPER_RE.get_or_init(|| compile_all(default_superlative_patterns()));
-    let price_res = PRICE_RE.get_or_init(|| compile_all(default_price_patterns()));
+    let super_res = SUPER_RE.get_or_init(|| compile_all(&default_superlative_patterns()));
+    let price_res = PRICE_RE.get_or_init(|| compile_all(&default_price_patterns()));
     let user_terms: Vec<&str> = spec.banned_terms.iter().map(|s| s.as_str()).collect();
     let user_res = compile_all(&user_terms);
 
@@ -559,6 +580,38 @@ mod tests {
                 .any(|i| i.contains("Title") && i.contains("exceeds")),
             "{issues_over:?}"
         );
+    }
+
+    #[test]
+    fn banned_hits_does_not_false_positive_on_korean_compound_words() {
+        // Each of these contains a banned bare word as a *substring prefix* of an unrelated
+        // longer compound word, and must NOT be flagged (see `bare_korean_word`).
+        let cases = [
+            "최고급 원두를 사용한 커피 앱", // premium-grade (not a "best" claim)
+            "최고치를 경신했습니다",        // all-time high (not a "best" claim)
+            "업무 최초부터 끝까지 관리",    // from the beginning (not a "first-ever" claim)
+            "유일무이한 나만의 다이어리",   // idiom "one and only" — still just a substring test
+            "특가품 모아보기",              // bargain item (not a discount-phrase claim)
+            "이 앱은 인기 순위 31위에 올랐습니다", // ranked 31st, not "#1"
+            "101위까지 순위 제공",          // rank 101, not "#1"
+            "세일즈맵으로 영업 실적을 관리하세요", // "sales" (business term), not "on sale"
+        ];
+        for text in cases {
+            let hits = banned_hits(&test_spec(), text);
+            assert!(hits.is_empty(), "false positive on {text:?}: {hits:?}");
+        }
+    }
+
+    #[test]
+    fn banned_hits_still_flags_genuine_korean_superlative_and_price_claims() {
+        let spec = test_spec();
+        assert!(!banned_hits(&spec, "국내 최고 인기 앱").is_empty());
+        assert!(!banned_hits(&spec, "업계 최초 도입").is_empty());
+        assert!(!banned_hits(&spec, "국내 유일 서비스").is_empty());
+        assert!(!banned_hits(&spec, "지금 1위 다운로드").is_empty());
+        assert!(!banned_hits(&spec, "31위가 아니라 당당히 1위").is_empty());
+        assert!(!banned_hits(&spec, "여름맞이 특별 세일").is_empty());
+        assert!(!banned_hits(&spec, "이번주 특가 상품").is_empty());
     }
 
     #[test]
