@@ -326,30 +326,42 @@ cargo build --release   # target/release/aso
 
 ## Real-world validation
 
-This repo went through an actual review pass on itself: static code review first, then real
-`aso` CLI execution (`claude -p --model haiku --judge-model haiku`) to verify the fixes under an
-actual model — not just re-reading the diff. Every number below is from what was actually run;
-full methodology and the round that found nothing: [`evals/README.md`](evals/README.md).
+This repo went through an actual review pass on itself, across multiple rounds: static code
+review, an adversarial security/robustness re-audit, edge-case test expansion, and real `aso`
+CLI execution (`claude -p --model haiku --judge-model haiku`) to verify the fixes under an
+actual model — not just re-reading the diff. Every number below is from what was actually run.
 
 | Round | Type | Issues found & fixed | Real cost |
 |---|---|---|---|
 | 1 | Static review, `src/` | 3 | — (read-only) |
 | 2 | Static review, deeper pass | 2 | — (read-only) |
 | 3 | Real CLI execution (verification) | 0 | **$0.4655** |
-| **Total** | | **5 found & fixed** | **$0.4655** |
+| 4 | Adversarial security/robustness re-audit | 3 | — (read-only) |
+| 5 | Edge-case test coverage: 21 → 45 tests | 0 | — |
+| 6 | Real CLI execution, new domain (verification) | 0 | **$0.3506** |
+| **Total** | | **8 found & fixed** | **$0.8161** |
 
-**Standout finding:** a Korean-specific regex false-positive class, not a generic "forgot `\b`"
-typo. The banned-term/superlative checks used bare Korean words (최고, 최초, 유일, 세일, 특가) as
-unanchored substrings — since every Hangul syllable is a Unicode word character, "최고" (best)
-matched inside unrelated compounds like 최고급 (premium-grade) and 최고치 (highest figure),
-flagging ordinary, policy-compliant app-store copy as banned claims. Fixed with a word-boundary
-helper anchored on non-Hangul characters.
+**Standout finding (round 2):** a Korean-specific regex false-positive class, not a generic
+"forgot `\b`" typo. The banned-term/superlative checks used bare Korean words (최고, 최초, 유일,
+세일, 특가) as unanchored substrings — since every Hangul syllable is a Unicode word character,
+"최고" (best) matched inside unrelated compounds like 최고급 (premium-grade) and 최고치 (highest
+figure), flagging ordinary, policy-compliant app-store copy as banned claims. Fixed with a
+word-boundary helper anchored on non-Hangul characters.
 
-**Round 3 found no bugs — recorded as such, not rounded up to a "success."** Running the real
-pipeline (`aso gen` against both bundled example specs, `aso score` against a Korean document
-loaded with every phrase the regex bug used to mis-flag) exercised the fix end-to-end under real
-model calls: the deterministic check layer reported `"banned_hits": []` — zero false positives.
-Its value was confirming the fix holds under real conditions, not discovering a new defect.
+**Standout finding (round 4):** `weight = inf` is valid TOML and passed the existing
+`c.weight > 0.0` check (`f64::INFINITY > 0.0` is `true`), corrupting `weight_sum()` into `NaN`
+and embedding the literal string `"(weight NaN%)"` directly into the real generation/judge prompt
+sent to `claude -p`, not just an internal score. Fixed by requiring `is_finite()` too.
+
+**Round 3 and round 6 found no bugs — recorded as such, not rounded up to a "success."** Round 3
+ran the real pipeline (`aso gen` against both bundled example specs, `aso score` against a
+Korean document loaded with every phrase the regex bug used to mis-flag) and confirmed
+`"banned_hits": []` — zero false positives. Round 6 re-ran `aso gen` against a spec/brief for a
+different app domain (PulseTrack, fitness tracking, vs. the bundled MoneyFlow example) to check
+the round 4/5 hardening holds outside the one example already exercised — also clean, no crash,
+no `NaN`, no malformed output. Full round-by-round methodology, including the adversarial
+security re-audit (#12/#13/#14) and the `v0.1.0` release:
+[`evals/README.md`](evals/README.md).
 
 ## Open-source attribution
 
