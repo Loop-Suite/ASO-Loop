@@ -411,7 +411,23 @@ where
     (out, failed)
 }
 
+/// Generous upper bound for any single --brief/--input text file. Legitimate inputs here (app
+/// briefs, generated listing docs capped at a few thousand chars per field by the spec itself)
+/// are always tiny; this exists only to fail fast with a clear error instead of reading an
+/// oversized/corrupted file entirely into memory (`--input` directories in Score mode are
+/// explicitly meant to be batch-processed, so a single stray large file shouldn't stall the run).
+const MAX_TEXT_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
 fn read_text(p: &Path) -> Result<String> {
+    let meta =
+        std::fs::metadata(p).with_context(|| format!("Failed to stat file: {}", p.display()))?;
+    anyhow::ensure!(
+        meta.len() <= MAX_TEXT_FILE_BYTES,
+        "File too large ({} bytes, max {} bytes): {} — not a plausible brief/listing text file",
+        meta.len(),
+        MAX_TEXT_FILE_BYTES,
+        p.display()
+    );
     std::fs::read_to_string(p).with_context(|| format!("Failed to read file: {}", p.display()))
 }
 
@@ -438,4 +454,33 @@ fn collect_docs(input: &Path) -> Result<Vec<PathBuf>> {
         .collect();
     v.sort();
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_text_rejects_oversized_file() {
+        let path = std::env::temp_dir().join(format!(
+            "aso_read_text_oversized_{}.txt",
+            std::process::id()
+        ));
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            f.set_len(MAX_TEXT_FILE_BYTES + 1).unwrap();
+        }
+        let err = read_text(&path).expect_err("oversized file must be rejected");
+        assert!(format!("{err:#}").contains("too large"), "{err:#}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_text_allows_small_file() {
+        let path =
+            std::env::temp_dir().join(format!("aso_read_text_small_{}.txt", std::process::id()));
+        std::fs::write(&path, "hello brief").unwrap();
+        assert_eq!(read_text(&path).unwrap(), "hello brief");
+        let _ = std::fs::remove_file(&path);
+    }
 }
