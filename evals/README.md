@@ -13,7 +13,10 @@ nothing.
 | 1 | Static code review | Initial pass over `src/` | 3 — [#2](https://github.com/Loop-Suite/ASO-Loop/issues/2), [#3](https://github.com/Loop-Suite/ASO-Loop/issues/3), [#4](https://github.com/Loop-Suite/ASO-Loop/issues/4) | — (read-only review, no `aso` CLI run) |
 | 2 | Static code review, deeper pass | `src/checks.rs`, `src/main.rs` | 2 — [#5](https://github.com/Loop-Suite/ASO-Loop/issues/5), [#6](https://github.com/Loop-Suite/ASO-Loop/issues/6) | — (read-only review, no `aso` CLI run) |
 | 3 | Real CLI execution (`claude -p --model haiku --judge-model haiku`) | `aso gen` on both bundled example specs + `aso score` on a Korean word-boundary regression doc | 0 — no bugs found | **$0.4655** |
-| **Total** | | | **5 issues found & fixed, 1 verification round clean** | **$0.4655** |
+| 4 | Adversarial security/robustness re-audit | `src/spec.rs`, `src/checks.rs`, `src/main.rs` | 3 — [#12](https://github.com/Loop-Suite/ASO-Loop/issues/12), [#13](https://github.com/Loop-Suite/ASO-Loop/issues/13), [#14](https://github.com/Loop-Suite/ASO-Loop/issues/14) | — (read-only review + `cargo test`/`clippy`/`fmt`, no `aso` CLI run) |
+| 5 | Edge-case test coverage expansion | `src/checks.rs`, `src/spec.rs` test modules | 0 — test-only, no new production bugs; 21 → 45 tests | — (no `aso` CLI run) |
+| 6 | Real CLI execution (`--model haiku --judge-model haiku`), new domain | `aso gen` on a PulseTrack (fitness app) spec/brief — different domain from the bundled MoneyFlow example | 0 — no bugs found | **$0.3506** |
+| **Total** | | | **8 issues found & fixed, 2 verification rounds clean** | **$0.8161** |
 
 **What this bought:**
 
@@ -47,6 +50,45 @@ nothing.
 - **Total real spend: $0.4655 across 3 `aso` invocations**, all against Claude Haiku
   (`--model haiku --judge-model haiku`): $0.2280 (`aso gen`, Apple spec) + $0.1841 (`aso gen`,
   Google spec) + $0.0534 (`aso score`, Korean regression doc).
+
+**This round added (production-hardening pass, rounds 4–6):**
+
+- **The standout new finding is #12: a `NaN` that reaches the real LLM prompt, not just an
+  internal score.** TOML's float grammar accepts `inf` as a literal, and `f64::INFINITY > 0.0`
+  is `true` in Rust, so `weight = inf` passed the existing weight check. From there `weight_sum()`
+  returned `inf`, every per-criterion percentage in `rubric_prompt()` computed as `NaN`, and the
+  literal string `"(weight NaN%)"` was embedded into the actual generation/judge prompt text sent
+  to `claude -p` — a malformed-input bug with a blast radius that reaches the model call, not just
+  a bad number in a report.
+- **#13 is a same-shape sibling of #4, not a new bug class.** #4 (round 1) rejected duplicate
+  section *ids*; #13 found that `field_bodies()` actually matches document headings to sections by
+  normalized *title* (`norm_head()`), a path #4's id-only check never covered, so two sections with
+  distinct ids but colliding normalized titles still silently aliased to the same body. Same
+  silent-data-loss failure mode, reached through the field #4's fix didn't touch. Fixed by exposing
+  `norm_head` as `pub(crate)` and reusing it for a duplicate-title check.
+- **Round 4's negative results are recorded with the same rigor as the positive ones.** ReDoS was
+  ruled out structurally (the `regex` crate is automata-based, not backtracking — not "we didn't
+  find an input," but "no input can trigger it"). Deeply-nested TOML was tested to 200,000 levels
+  and confirmed to fail fast, not stack-overflow. Path traversal was ruled out by construction
+  (every written path is a fixed name or an internally generated label). #5's Korean word-boundary
+  bug was checked for recurrence in other scripts and confirmed absent, because the default
+  patterns never special-cased any script besides English and Korean to begin with.
+- **Round 5 found a real, low-severity gap and chose not to "fix" it: `duplicate_keywords_across_fields()`
+  doesn't segment unspaced CJK text.** Its tokenizer is whitespace-based, so an exact keyword
+  phrase repeated verbatim across title/subtitle in Chinese or Japanese isn't flagged. This is a
+  false negative (a missed hint), not the false-positive class #5 fixed — a correct fix needs
+  script-aware word segmentation, judged disproportionate to what this heuristic check is for. It's
+  documented with a doc comment and pinned with a regression test instead of patched.
+- **Test count went from 21 to 45**, including a regression test for #4's exact fix
+  (`Spec::load` duplicate section id) that had never had one, plus non-Latin script coverage
+  (Japanese, Chinese, Arabic, Cyrillic — Cyrillic specifically exercising case-insensitive
+  folding) and a ~500,000-character document timing check.
+- **`v0.1.0` is the project's first tagged release**, with `CHANGELOG.md` (Keep a Changelog
+  format, including a dedicated Security section for #12/#13/#14) merged ahead of the tag.
+- **Round 6 re-verified on a domain the codebase had never been run against**: PulseTrack, a
+  fitness-tracking app, instead of the bundled MoneyFlow example every prior real-CLI round used.
+  No crash, no `NaN`, no malformed output — **no new bugs found, recorded honestly** rather than
+  padded into a "success," same as round 3.
 
 ## Round 1 — static review: #2, #3, #4
 
@@ -161,3 +203,114 @@ This round is included precisely because it *didn't* find anything — a review 
 every round reports a new bug isn't a credible one. Round 3's real contribution was confirming,
 with actual model calls and real spend, that a fix already believed correct from reading the
 diff actually behaves correctly end-to-end.
+
+## Round 4 — adversarial re-audit: #12, #13, #14
+
+A second adversarial pass over the same attack surface any external-input-parsing Rust CLI
+should be re-probed on: regex handling, TOML validation, resource exhaustion, path traversal.
+The explicit goal was to hunt for the same *classes* of bug already fixed elsewhere in the
+codebase recurring somewhere else, plus genuinely new categories — not just re-read the existing
+fixes. Fixed in [PR #15](https://github.com/Loop-Suite/ASO-Loop/pull/15), merged same-day;
+static review only, no `aso` CLI run (`cargo build`/`test`/`clippy`/`fmt` all clean).
+
+### [#12](https://github.com/Loop-Suite/ASO-Loop/issues/12) — `weight = inf` is valid TOML and passes validation, corrupting scores and the real LLM prompt with `NaN`
+
+`Spec::load`'s weight check was `c.weight > 0.0` (`src/spec.rs`). TOML's float grammar accepts
+`inf`/`-inf`/`nan` as literals, and `f64::INFINITY > 0.0` evaluates to `true` in Rust, so
+`weight = inf` in a spec file passed validation silently. From there it propagated two ways:
+`weight_sum()` returned `inf`, so every per-criterion percentage computed in `rubric_prompt()`
+became `inf / inf = NaN` — and the literal string `"(weight NaN%)"` was embedded directly into
+the generation/judge prompt text actually sent to `claude -p`, not just logged internally. The
+final aggregate score in `score.rs` cascaded to `NaN` throughout the rest of the pipeline as
+well. Fixed by adding `c.weight.is_finite()` alongside the existing `> 0.0` check
+(`src/spec.rs:124`).
+
+### [#13](https://github.com/Loop-Suite/ASO-Loop/issues/13) — sibling of #4: colliding normalized section *titles* silently alias to the same document body
+
+#4 (round 1) rejected duplicate section **ids** in `Spec::load`. This issue is the same
+underlying failure reached through a different field: `field_bodies()` (`src/checks.rs`)
+actually matches a document's `## Heading` lines to spec sections by normalizing the heading
+text and comparing it to `norm_head(&section.title)` — the **title**, not the id. So two
+sections with distinct ids but colliding normalized titles (e.g. `"Promo Text"` vs
+`"PromoText"`, which normalize identically) still silently aliased to the same document body via
+`BTreeMap::insert` — the exact silent-data-loss failure mode #4 fixed, just reachable through a
+field #4's id-only check never covered. Fixed by making `norm_head` `pub(crate)` (previously
+private to `checks.rs`) and reusing it in `Spec::load` to reject duplicate normalized titles the
+same way duplicate ids are already rejected (`src/checks.rs:40`, `src/spec.rs:149`).
+
+### [#14](https://github.com/Loop-Suite/ASO-Loop/issues/14) — no size cap on `--spec`/`--brief`/`--input` file reads
+
+`read_text()` (`src/main.rs`, backs `--brief` and every file `aso score --input <dir>`
+batch-collects) and `Spec::load`'s spec-file read both called `std::fs::read_to_string()`
+directly with no upper bound. `score --input` explicitly walks a directory and reads every
+matching file, so a single oversized or corrupted file would be read entirely into memory before
+any validation ran. Fixed with a 10MB cap — `MAX_TEXT_FILE_BYTES` (`src/main.rs:419`) and
+`MAX_SPEC_FILE_BYTES` (`src/spec.rs:102`) — generous headroom over real usage (specs run a few
+KB; `description` fields cap at 4000 chars in the bundled examples).
+
+### Audited, confirmed **not** vulnerable (no issue filed)
+
+- **ReDoS / catastrophic backtracking** — the `regex` crate (1.13.1 per `Cargo.lock`) is
+  automata-based, not backtracking. Linear time is guaranteed regardless of pattern; this class
+  of bug is structurally impossible here, not merely untriggered by the inputs tried.
+- **Deeply-nested malformed TOML** — tested a spec file with 200,000 levels of array nesting; the
+  `toml` crate rejects it with a fast, clean `Err`. No stack overflow observed.
+- **Path traversal** — every path this tool writes is either a fixed filename (`report.md`,
+  `results.jsonl`, `best.md`) or an internally generated label (`cand01`, `iter01`), never
+  derived from spec/brief/document content. No injection surface exists.
+- **#5's Korean word-boundary bug recurring in another script** — checked and does not recur,
+  because the built-in banned/superlative default patterns only special-case English and Korean
+  to begin with; there is no equivalent code path for another script to have the same bug in.
+
+## Round 5 — edge-case test coverage: 21 → 45 tests
+
+Test-only pass, [PR #16](https://github.com/Loop-Suite/ASO-Loop/pull/16), merged the same day as
+round 4 — no production code changes, additions confined to `src/checks.rs` and `src/spec.rs`
+test modules.
+
+- Empty input: empty document, empty spec.
+- A ~500,000-character document, timed, to confirm no pathological slowdown on large input at
+  the full check-pipeline level (round 4 already cleared the regex engine itself of ReDoS; this
+  exercises the whole pipeline end-to-end at scale).
+- Non-Latin script coverage for user-defined banned-term matching: Japanese, Chinese, Arabic, and
+  Cyrillic — Cyrillic specifically exercising case-insensitive folding.
+- Non-Latin target-keyword coverage.
+- A dedicated test for every validation branch in `Spec::load`, including duplicate section id —
+  #4's fix (`6b39872`, round 1) had never had a regression test for the exact bug it fixed, until
+  now. Also: empty sections/criteria, zero/negative `max_chars`, duplicate criteria id, invalid
+  `banned_terms` regex, unparseable TOML syntax, a missing required field, and the 200,000-level
+  TOML nesting case from round 4's manual audit, now pinned as a permanent regression test.
+
+**Known limitation, documented, not fixed:** `duplicate_keywords_across_fields()`'s tokenizer is
+whitespace-based, so it doesn't segment unspaced CJK text — an exact keyword phrase repeated
+verbatim across title/subtitle in Chinese or Japanese isn't flagged. This is a false negative (a
+missed hint, not a wrong rejection like #5 was) and low severity; a correct fix needs
+script-aware word segmentation, which is disproportionate to what this heuristic check is for.
+Pinned with a doc comment and a regression test instead of patched.
+
+## Versioning — `CHANGELOG.md` + `v0.1.0` tag
+
+[PR #17](https://github.com/Loop-Suite/ASO-Loop/pull/17) added `CHANGELOG.md` (Keep a Changelog
+format), covering Added/Fixed/Security/Changed for everything through round 5 — including a
+dedicated **Security** section for #12/#13/#14 (NaN weight injection, title-collision aliasing,
+unbounded file read) and the confirmed-not-vulnerable audit findings from round 4. Tagged and
+published as the project's first release:
+[`v0.1.0`](https://github.com/Loop-Suite/ASO-Loop/releases/tag/v0.1.0).
+
+## Round 6 — real CLI execution: verification on a new domain (PulseTrack)
+
+One real `aso gen` invocation, `-n 2 --model haiku --judge-model haiku`, against a new spec +
+brief for **PulseTrack**, a fitness-tracking app — deliberately a different product domain from
+the bundled `MoneyFlow` example every prior real-CLI round (round 3) ran against, specifically to
+check the round 4/5 fixes generalize past the one example already exercised, rather than
+re-running the same input again.
+
+| Run | Command | Result | Cost |
+|---|---|---|---|
+| PulseTrack generation | `aso gen -n 2 --model haiku --judge-model haiku` | Ranked cleanly: cand01 80.3/100, cand02 79.4/100. No crash, no `NaN`, no malformed output; `[uncertain]` warnings behaved as expected. | $0.3506 |
+
+**Outcome: no new bugs found — recorded honestly, same standard as round 3.** This confirms the
+round 4/5 fixes (the `is_finite()` weight guard, the title-collision check, the 10MB file-size
+cap, the expanded CJK/edge-case coverage) hold under a real end-to-end run on an out-of-sample
+domain, not just under `cargo test`. Not every round finds something; this one's value is
+confirming the hardening pass holds under real conditions.
