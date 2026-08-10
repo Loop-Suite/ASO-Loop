@@ -150,7 +150,8 @@ fn real_main() -> Result<()> {
     let cli = Cli::parse();
     let gen_llm = build_llm(&cli, cli.model.clone());
     let judges = judge_panel(&cli);
-    if cli.judge_model.is_none() {
+    // Score-only mode never generates anything, so the self-scoring bias warning doesn't apply there.
+    if cli.judge_model.is_none() && !matches!(cli.cmd, Cmd::Score { .. }) {
         eprintln!(
             "Warning: the generation model and judge model are the same. Since there's a bias toward rating one's own writing style favorably, \
              it's better to specify a different model with --judge-model."
