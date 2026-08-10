@@ -168,6 +168,10 @@ fn real_main() -> Result<()> {
             concurrency,
             no_score,
         } => {
+            // Without this, `-n 0` falls through to the "no docs produced" check below and
+            // reports the confusing "all 0 requested item(s) failed" — nothing failed, 0 was
+            // simply never a valid request.
+            anyhow::ensure!(*count > 0, "-n/--count must be greater than 0");
             let sp = Spec::load(spec)?;
             let brief_text = read_text(brief)?;
             let out_dir = prepare_out(out)?;
