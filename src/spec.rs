@@ -105,8 +105,10 @@ impl Spec {
         anyhow::ensure!(!spec.sections.is_empty(), "sections is empty");
         anyhow::ensure!(!spec.criteria.is_empty(), "criteria is empty");
         anyhow::ensure!(
-            spec.criteria.iter().all(|c| c.weight > 0.0),
-            "all criteria weights must be greater than 0"
+            spec.criteria
+                .iter()
+                .all(|c| c.weight.is_finite() && c.weight > 0.0),
+            "all criteria weights must be finite and greater than 0"
         );
         anyhow::ensure!(
             spec.sections.iter().all(|s| s.max_chars > 0),
@@ -212,6 +214,25 @@ mod tests {
             .join(name)
     }
 
+    /// Writes a spec TOML string to a uniquely-named temp file (unique per test name + process id,
+    /// since `cargo test` runs tests in parallel within the same process).
+    fn write_temp_spec(test_name: &str, contents: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "aso_spec_test_{}_{}.toml",
+            std::process::id(),
+            test_name
+        ));
+        std::fs::write(&path, contents).expect("failed to write temp spec file");
+        path
+    }
+
+    const MINIMAL_SECTION: &str = r#"
+[[sections]]
+id = "title"
+title = "Title"
+max_chars = 10
+"#;
+
     #[test]
     fn example_apple_spec_loads_and_normalizes() {
         let sp = Spec::load(&spec_path("example-apple.toml")).expect("failed to load apple spec");
@@ -232,5 +253,32 @@ mod tests {
             .iter()
             .any(|s| s.id == "short_description" && s.max_chars == 80));
         assert!((sp.weight_sum() - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn load_rejects_infinite_criterion_weight() {
+        // TOML supports `inf`/`nan` float literals. `inf > 0.0` is true, so a naive
+        // `weight > 0.0` check alone lets it through — it must also be rejected as non-finite,
+        // since it corrupts weight_sum()/rubric_prompt()/score_doc()'s total with NaN downstream.
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\n{}\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = inf\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("infinite_weight", &toml_src);
+        let err = Spec::load(&path).expect_err("inf weight must be rejected");
+        assert!(
+            format!("{err:#}").contains("finite"),
+            "error should mention finiteness: {err:#}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_nan_criterion_weight() {
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\n{}\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = nan\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("nan_weight", &toml_src);
+        assert!(Spec::load(&path).is_err(), "nan weight must be rejected");
     }
 }
