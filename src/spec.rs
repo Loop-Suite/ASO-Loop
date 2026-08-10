@@ -124,6 +124,23 @@ impl Spec {
         let n = section_ids.len();
         section_ids.dedup();
         anyhow::ensure!(section_ids.len() == n, "duplicate section id");
+        // Sibling of the duplicate-id check above: field_bodies() (checks.rs) matches a section
+        // to a document heading via the same normalization (alphanumeric + lowercase) used here,
+        // and `.find()` only ever returns the first match. Two sections with different `id`s but
+        // titles that collide after normalization (e.g. "Promo Text" vs "PromoText") would
+        // silently alias to the same document body instead of erroring, so reject that upfront too.
+        let mut norm_titles: Vec<String> = spec
+            .sections
+            .iter()
+            .map(|s| crate::checks::norm_head(&s.title))
+            .collect();
+        norm_titles.sort_unstable();
+        let n = norm_titles.len();
+        norm_titles.dedup();
+        anyhow::ensure!(
+            norm_titles.len() == n,
+            "duplicate section title (after normalizing case/punctuation) — field_bodies() would silently alias two sections to the same document body"
+        );
         let bad: Vec<&str> = spec
             .banned_terms
             .iter()
@@ -280,5 +297,47 @@ max_chars = 10
         );
         let path = write_temp_spec("nan_weight", &toml_src);
         assert!(Spec::load(&path).is_err(), "nan weight must be rejected");
+    }
+
+    #[test]
+    fn load_rejects_duplicate_normalized_section_title() {
+        // Different ids, but titles collide once normalized (alphanumeric + lowercase) the same
+        // way field_bodies() normalizes headings — must be rejected, mirroring the existing
+        // duplicate-section-id check.
+        let toml_src = r#"
+name = "T"
+store = "apple"
+
+[[sections]]
+id = "promo_text"
+title = "Promo Text"
+max_chars = 100
+
+[[sections]]
+id = "promotext2"
+title = "PromoText"
+max_chars = 50
+
+[[criteria]]
+id = "x"
+name = "x"
+weight = 1.0
+"#;
+        let path = write_temp_spec("dup_normalized_title", toml_src);
+        let err = Spec::load(&path).expect_err("colliding normalized titles must be rejected");
+        assert!(
+            format!("{err:#}").contains("duplicate section title"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn load_allows_distinct_normalized_section_titles() {
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\n{}\n[[sections]]\nid = \"subtitle\"\ntitle = \"Subtitle\"\nmax_chars = 20\n\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = 1.0\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("distinct_titles", &toml_src);
+        assert!(Spec::load(&path).is_ok());
     }
 }
