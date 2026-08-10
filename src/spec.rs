@@ -117,6 +117,11 @@ impl Spec {
         let n = ids.len();
         ids.dedup();
         anyhow::ensure!(ids.len() == n, "duplicate criteria id");
+        let mut section_ids: Vec<&str> = spec.sections.iter().map(|s| s.id.as_str()).collect();
+        section_ids.sort_unstable();
+        let n = section_ids.len();
+        section_ids.dedup();
+        anyhow::ensure!(section_ids.len() == n, "duplicate section id");
         let bad: Vec<&str> = spec
             .banned_terms
             .iter()
