@@ -117,6 +117,47 @@ enum Cmd {
     },
 }
 
+/// Upper bound on `-n/--count` (Gen) — this directly controls how many real (billed) `claude -p`
+/// calls a single invocation makes. Without a cap, a typo (extra zero) or an untrusted/scripted
+/// invocation turns one run into an unbounded number of API calls with no confirmation step.
+/// 20 is far beyond any real use case (the default is 3).
+const MAX_COUNT: usize = 20;
+
+/// Upper bound on `--rounds`/`--judges` (Gen/Score/Loop) — each round is a real (billed) judge
+/// call per document, so it multiplies with `count`/the `--input` batch size. Same rationale as
+/// `MAX_COUNT`. 10 is far beyond any real use case (the default is 2).
+const MAX_ROUNDS: usize = 10;
+
+/// Rejects requests that would trigger an unbounded (or just unreasonably large) number of billed
+/// LLM calls. Must run immediately after CLI parsing and before any `claude -p` invocation.
+fn validate_call_bounds(cmd: &Cmd) -> Result<()> {
+    match cmd {
+        Cmd::Gen { count, rounds, .. } => {
+            anyhow::ensure!(
+                *count <= MAX_COUNT,
+                "-n/--count too large ({count}, max {MAX_COUNT}) — would trigger an unbounded number of billed LLM calls"
+            );
+            anyhow::ensure!(
+                *rounds <= MAX_ROUNDS,
+                "--rounds too large ({rounds}, max {MAX_ROUNDS}) — would trigger an unbounded number of billed LLM calls"
+            );
+        }
+        Cmd::Score { rounds, .. } => {
+            anyhow::ensure!(
+                *rounds <= MAX_ROUNDS,
+                "--rounds too large ({rounds}, max {MAX_ROUNDS}) — would trigger an unbounded number of billed LLM calls"
+            );
+        }
+        Cmd::Loop { rounds, .. } => {
+            anyhow::ensure!(
+                *rounds <= MAX_ROUNDS,
+                "--rounds too large ({rounds}, max {MAX_ROUNDS}) — would trigger an unbounded number of billed LLM calls"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     if let Err(e) = real_main() {
         eprintln!("Error: {e:#}");
@@ -148,6 +189,7 @@ fn judge_panel(cli: &Cli) -> Vec<Llm> {
 
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
+    validate_call_bounds(&cli.cmd)?;
     let gen_llm = build_llm(&cli, cli.model.clone());
     let judges = judge_panel(&cli);
     // Score-only mode never generates anything, so the self-scoring bias warning doesn't apply there.
@@ -482,5 +524,82 @@ mod tests {
         std::fs::write(&path, "hello brief").unwrap();
         assert_eq!(read_text(&path).unwrap(), "hello brief");
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn gen_cmd(count: usize, rounds: usize) -> Cmd {
+        Cmd::Gen {
+            spec: PathBuf::from("spec.toml"),
+            brief: PathBuf::from("brief.md"),
+            count,
+            out: PathBuf::from("runs"),
+            rounds,
+            concurrency: 1,
+            no_score: false,
+        }
+    }
+
+    fn score_cmd(rounds: usize) -> Cmd {
+        Cmd::Score {
+            spec: PathBuf::from("spec.toml"),
+            input: PathBuf::from("input"),
+            out: PathBuf::from("runs"),
+            rounds,
+            concurrency: 1,
+        }
+    }
+
+    fn loop_cmd(rounds: usize) -> Cmd {
+        Cmd::Loop {
+            spec: PathBuf::from("spec.toml"),
+            brief: PathBuf::from("brief.md"),
+            out: PathBuf::from("runs"),
+            target: 85.0,
+            max_iter: 4,
+            rounds,
+            min_delta: 2.0,
+            patience: 2,
+            angle: String::new(),
+            gate_model: None,
+        }
+    }
+
+    #[test]
+    fn validate_call_bounds_rejects_oversized_count() {
+        let err = validate_call_bounds(&gen_cmd(MAX_COUNT + 1, 1))
+            .expect_err("count above MAX_COUNT must be rejected");
+        assert!(format!("{err:#}").contains("count"), "{err:#}");
+    }
+
+    #[test]
+    fn validate_call_bounds_allows_count_at_limit() {
+        assert!(validate_call_bounds(&gen_cmd(MAX_COUNT, 1)).is_ok());
+    }
+
+    #[test]
+    fn validate_call_bounds_rejects_oversized_rounds_in_gen() {
+        let err = validate_call_bounds(&gen_cmd(1, MAX_ROUNDS + 1))
+            .expect_err("rounds above MAX_ROUNDS must be rejected");
+        assert!(format!("{err:#}").contains("rounds"), "{err:#}");
+    }
+
+    #[test]
+    fn validate_call_bounds_rejects_oversized_rounds_in_score() {
+        let err = validate_call_bounds(&score_cmd(MAX_ROUNDS + 1))
+            .expect_err("rounds above MAX_ROUNDS must be rejected");
+        assert!(format!("{err:#}").contains("rounds"), "{err:#}");
+    }
+
+    #[test]
+    fn validate_call_bounds_rejects_oversized_rounds_in_loop() {
+        let err = validate_call_bounds(&loop_cmd(MAX_ROUNDS + 1))
+            .expect_err("rounds above MAX_ROUNDS must be rejected");
+        assert!(format!("{err:#}").contains("rounds"), "{err:#}");
+    }
+
+    #[test]
+    fn validate_call_bounds_allows_rounds_at_limit() {
+        assert!(validate_call_bounds(&gen_cmd(1, MAX_ROUNDS)).is_ok());
+        assert!(validate_call_bounds(&score_cmd(MAX_ROUNDS)).is_ok());
+        assert!(validate_call_bounds(&loop_cmd(MAX_ROUNDS)).is_ok());
     }
 }
