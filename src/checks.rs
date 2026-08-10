@@ -168,6 +168,19 @@ pub fn metrics(spec: &Spec, doc: &str) -> Metrics {
 /// List of words (tokens) that overlap across dedup-target fields (title/subtitle/keywords, etc.).
 /// Apple automatically dedups title+subtitle+keywords when indexing, so placing the same keyword
 /// in multiple fields just wastes character count.
+///
+/// Known limitation: tokenization here is whitespace-based (`.split(' ')` after
+/// `normalize_text_for_match`), which assumes words are space-delimited. That holds for Korean
+/// (which uses spacing) but not for Chinese or Japanese, which are conventionally written as an
+/// unbroken run of characters with no spaces at all — a field's entire body normalizes to one
+/// (or a few, at punctuation) giant "token," so an exact keyword phrase repeated verbatim across
+/// two fields will not be detected as a duplicate for those scripts. This is a silent false
+/// negative (a missed optimization hint), not a false positive that rejects compliant copy, so
+/// it's lower severity than the Korean word-boundary bug fixed in #5 — and a real fix would need
+/// script-aware word segmentation (e.g. a dictionary-based tokenizer), which is disproportionate
+/// to what this heuristic check is for. Documented and covered by a regression test
+/// (`cjk_duplicate_keyword_across_fields_is_a_known_gap`) rather than "fixed" with something
+/// fragile.
 fn duplicate_keywords_across_fields(spec: &Spec, bodies: &BTreeMap<String, String>) -> Vec<String> {
     let targets: Vec<&Section> = spec
         .sections
@@ -623,5 +636,166 @@ mod tests {
         let m = metrics(&spec, doc);
         assert_eq!(m.keyword_coverage, 2);
         assert_eq!(m.keyword_total, 2);
+    }
+
+    // ---- Edge cases: empty input, huge input, non-Latin/non-Korean charsets, malformed spec ----
+
+    /// A spec with generous limits (so multilingual test text doesn't also trip the character-
+    /// count checks, which aren't what these tests are about) and caller-supplied
+    /// keywords/banned-terms.
+    fn spec_with(target_keywords: Vec<&str>, banned_terms: Vec<&str>) -> Spec {
+        use crate::spec::Criterion;
+        Spec {
+            name: "Test".into(),
+            store: Store::Apple,
+            context: String::new(),
+            scoring_source: String::new(),
+            target_keywords: target_keywords.into_iter().map(String::from).collect(),
+            banned_terms: banned_terms.into_iter().map(String::from).collect(),
+            emoji_max: 10,
+            angles: vec![],
+            bands: vec![],
+            sections: vec![
+                Section {
+                    id: "title".into(),
+                    title: "Title".into(),
+                    guide: String::new(),
+                    max_chars: 1000,
+                    min_chars: 0,
+                    required: true,
+                    keyword_dedup_target: true,
+                },
+                Section {
+                    id: "subtitle".into(),
+                    title: "Subtitle".into(),
+                    guide: String::new(),
+                    max_chars: 1000,
+                    min_chars: 0,
+                    required: true,
+                    keyword_dedup_target: true,
+                },
+            ],
+            criteria: vec![Criterion {
+                id: "x".into(),
+                name: "x".into(),
+                weight: 1.0,
+                guide: String::new(),
+            }],
+        }
+    }
+
+    #[test]
+    fn empty_document_reports_missing_required_fields_without_panicking() {
+        let spec = test_spec();
+        let issues = format_issues(&spec, "", None);
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("Title") && i.contains("missing")));
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("Subtitle") && i.contains("missing")));
+        let m = metrics(&spec, "");
+        assert_eq!(m.total_chars, 0);
+        assert_eq!(m.keyword_coverage, 0);
+        assert!(m.banned_hits.is_empty());
+        assert!(m.duplicate_keywords.is_empty());
+    }
+
+    #[test]
+    fn empty_spec_keywords_and_banned_terms_do_not_panic() {
+        let spec = spec_with(vec![], vec![]);
+        let doc = "## Title\nAnything goes here\n## Subtitle\nNo target keywords or banned terms configured\n";
+        let issues = format_issues(&spec, doc, None);
+        // No keyword-coverage or banned-term issues possible with nothing configured.
+        assert!(!issues.iter().any(|i| i.contains("banned expression")));
+        assert!(!issues.iter().any(|i| i.contains("coverage")));
+    }
+
+    #[test]
+    fn large_document_completes_without_hanging() {
+        // ~500K characters — far beyond any real ASO field, but format_issues/metrics must stay
+        // fast (regex crate is automata-based, not backtracking) and correct, not hang or panic,
+        // even on a single field wildly over its max_chars limit.
+        let spec = test_spec();
+        let huge_body = "가계부 지출관리 ".repeat(50_000);
+        let doc = format!("## Title\n{huge_body}\n## Subtitle\n지출관리\n");
+        let started = std::time::Instant::now();
+        let issues = format_issues(&spec, &doc, None);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "format_issues took too long on a large document: {:?}",
+            started.elapsed()
+        );
+        assert!(issues
+            .iter()
+            .any(|i| i.contains("Title") && i.contains("exceeds")));
+    }
+
+    #[test]
+    fn banned_hits_handles_japanese_user_defined_term() {
+        // Japanese has no case to fold and no ASCII-style word boundaries either, but this goes
+        // through the user-defined banned_terms path (spec.rs compiles these as plain regex —
+        // no bare_korean_word-style wrapping is applied, or expected, since that's the spec
+        // author's responsibility for their own patterns), so a straightforward literal match
+        // must work correctly.
+        let spec = spec_with(vec![], vec!["競合アプリ"]);
+        assert!(!banned_hits(&spec, "これは競合アプリです").is_empty());
+        assert!(banned_hits(&spec, "これは全く関係ないアプリです").is_empty());
+    }
+
+    #[test]
+    fn banned_hits_handles_chinese_user_defined_term() {
+        let spec = spec_with(vec![], vec!["竞品应用"]);
+        assert!(!banned_hits(&spec, "请勿使用竞品应用的名称").is_empty());
+        assert!(banned_hits(&spec, "这是一个完全无关的应用").is_empty());
+    }
+
+    #[test]
+    fn banned_hits_handles_arabic_user_defined_term() {
+        // Right-to-left script — verifies char::is_alphanumeric() treats Arabic letters as
+        // alphanumeric (normalize_text_for_match doesn't blank them out to spaces) and that
+        // regex matching/find() work correctly on RTL text.
+        let spec = spec_with(vec![], vec!["تطبيق منافس"]);
+        assert!(!banned_hits(&spec, "لا تستخدم تطبيق منافس").is_empty());
+        assert!(banned_hits(&spec, "هذا تطبيق مختلف تمامًا").is_empty());
+    }
+
+    #[test]
+    fn banned_hits_handles_cyrillic_case_insensitive_matching() {
+        // Cyrillic, unlike CJK/Arabic, does have upper/lower case — verifies
+        // RegexBuilder::case_insensitive folds Cyrillic case correctly, not just ASCII.
+        let spec = spec_with(vec![], vec!["скидка"]); // "discount" (lowercase)
+        assert!(
+            !banned_hits(&spec, "СКИДКА 50%").is_empty(),
+            "uppercase Cyrillic must still match"
+        );
+        assert!(!banned_hits(&spec, "большая скидка сегодня").is_empty());
+    }
+
+    #[test]
+    fn keyword_coverage_matches_non_latin_target_keywords() {
+        let spec = spec_with(vec!["家計簿アプリ", "省钱记账", "تطبيق ميزانية"], vec![]);
+        let doc = "## Title\n家計簿アプリと省钱记账とتطبيق ميزانيةをすべて含む\n## Subtitle\nx\n";
+        let m = metrics(&spec, doc);
+        assert_eq!(m.keyword_coverage, 3, "{:?}", m.matched_keywords);
+    }
+
+    #[test]
+    fn cjk_duplicate_keyword_across_fields_is_a_known_gap() {
+        // Documents the whitespace-tokenization limitation explained on
+        // duplicate_keywords_across_fields(): Chinese/Japanese have no spaces between words, so
+        // an exact phrase repeated verbatim across title/subtitle is NOT detected as a
+        // cross-field duplicate, unlike the equivalent Korean case (which does use spacing and
+        // is covered by format_issues_flags_duplicate_keyword above). This is a known, documented
+        // false negative, not a regression — if this test starts failing because someone
+        // improved the tokenizer, that's a welcome change; update the assertion accordingly.
+        let spec = spec_with(vec![], vec![]);
+        let doc = "## Title\n省钱记账超级好用APP\n## Subtitle\n省钱记账从未如此简单\n";
+        let m = metrics(&spec, doc);
+        assert!(
+            m.duplicate_keywords.is_empty(),
+            "expected the known tokenization gap to still apply: {:?}",
+            m.duplicate_keywords
+        );
     }
 }
