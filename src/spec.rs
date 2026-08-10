@@ -96,8 +96,22 @@ pub const DEFAULT_BANDS: &[&str] = &[
     "0~39: Unusable. Numerous character-count violations or content unrelated to the review criteria.",
 ];
 
+/// Generous upper bound for a spec TOML file. Real specs (see `specs/example-*.toml`) are a few
+/// KB; this exists only to fail fast with a clear error on an oversized/corrupted file instead of
+/// reading it entirely into memory before validation runs.
+const MAX_SPEC_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
 impl Spec {
     pub fn load(path: &Path) -> Result<Spec> {
+        let meta = std::fs::metadata(path)
+            .with_context(|| format!("Failed to stat spec file: {}", path.display()))?;
+        anyhow::ensure!(
+            meta.len() <= MAX_SPEC_FILE_BYTES,
+            "Spec file too large ({} bytes, max {} bytes): {} — not a plausible spec TOML file",
+            meta.len(),
+            MAX_SPEC_FILE_BYTES,
+            path.display()
+        );
         let s = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read spec file: {}", path.display()))?;
         let spec: Spec = toml::from_str(&s)
@@ -339,5 +353,17 @@ weight = 1.0
         );
         let path = write_temp_spec("distinct_titles", &toml_src);
         assert!(Spec::load(&path).is_ok());
+    }
+
+    #[test]
+    fn load_rejects_oversized_spec_file() {
+        let path = write_temp_spec("oversized", "");
+        // Overwrite with a file larger than MAX_SPEC_FILE_BYTES without materializing 10MB of
+        // real TOML content in the test — content doesn't matter, only the file length does,
+        // since the size check happens before parsing.
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(MAX_SPEC_FILE_BYTES + 1).unwrap();
+        let err = Spec::load(&path).expect_err("oversized spec file must be rejected");
+        assert!(format!("{err:#}").contains("too large"), "{err:#}");
     }
 }
