@@ -35,7 +35,9 @@ pub struct Metrics {
 
 /// Normalization for heading comparison: keep only alphanumerics and lowercase them (the LLM may
 /// emit different casing like `## Title`/`## TITLE`, so match case-insensitively).
-fn norm_head(s: &str) -> String {
+/// `pub(crate)`: also reused by `spec::Spec::load` to reject sections whose titles collide under
+/// this same normalization, so the two stay in sync by construction instead of by convention.
+pub(crate) fn norm_head(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric())
         .collect::<String>()
