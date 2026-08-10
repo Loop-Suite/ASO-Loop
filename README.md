@@ -324,6 +324,33 @@ cargo build --release   # target/release/aso
 - Output is Markdown (`## Field Name` headings). Copying it into the actual App Store Connect / Google Play Console forms is out of scope.
 - The brief-vs-copy factual consistency check (`checks::factual_claim_issues`) is a regex-extracted claim list matched against the brief text by substring — not an LLM fact-checker, and it only runs in `gen`/`loop` modes (where a `--brief` exists); `score` mode has no brief to check against, so it's skipped there.
 
+## Real-world validation
+
+This repo went through an actual review pass on itself: static code review first, then real
+`aso` CLI execution (`claude -p --model haiku --judge-model haiku`) to verify the fixes under an
+actual model — not just re-reading the diff. Every number below is from what was actually run;
+full methodology and the round that found nothing: [`evals/README.md`](evals/README.md).
+
+| Round | Type | Issues found & fixed | Real cost |
+|---|---|---|---|
+| 1 | Static review, `src/` | 3 | — (read-only) |
+| 2 | Static review, deeper pass | 2 | — (read-only) |
+| 3 | Real CLI execution (verification) | 0 | **$0.4655** |
+| **Total** | | **5 found & fixed** | **$0.4655** |
+
+**Standout finding:** a Korean-specific regex false-positive class, not a generic "forgot `\b`"
+typo. The banned-term/superlative checks used bare Korean words (최고, 최초, 유일, 세일, 특가) as
+unanchored substrings — since every Hangul syllable is a Unicode word character, "최고" (best)
+matched inside unrelated compounds like 최고급 (premium-grade) and 최고치 (highest figure),
+flagging ordinary, policy-compliant app-store copy as banned claims. Fixed with a word-boundary
+helper anchored on non-Hangul characters.
+
+**Round 3 found no bugs — recorded as such, not rounded up to a "success."** Running the real
+pipeline (`aso gen` against both bundled example specs, `aso score` against a Korean document
+loaded with every phrase the regex bug used to mis-flag) exercised the fix end-to-end under real
+model calls: the deterministic check layer reported `"banned_hits": []` — zero false positives.
+Its value was confirming the fix holds under real conditions, not discovering a new defect.
+
 ## Open-source attribution
 
 `src/checks.rs`'s `normalize_keyword` / `sanitize_keywords` / `normalize_text_for_match` were rewritten in Rust based on logic from [semihcihan/App-Store-Optimization-CLI](https://github.com/semihcihan/App-Store-Optimization-CLI) (MIT License) — specifically `cli/domain/keywords/policy.ts` (`normalizeKeyword`, `sanitizeKeywords`) and `cli/shared/aso-keyword-utils.ts` (`normalizeTextForKeywordMatch`) — porting the normalization/dedup algorithm, not copying code verbatim. The original uses `.normalize("NFKC")` plus a Unicode regex (`\p{L}\p{N}\p{M}`); this project approximates that with `char::is_alphanumeric()` instead of adding the `unicode-normalization` crate, which is not a full NFKC equivalent.
