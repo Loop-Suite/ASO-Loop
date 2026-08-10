@@ -366,4 +366,175 @@ weight = 1.0
         let err = Spec::load(&path).expect_err("oversized spec file must be rejected");
         assert!(format!("{err:#}").contains("too large"), "{err:#}");
     }
+
+    // ---- Malformed-spec edge cases (none of Spec::load's validation branches below had a
+    // dedicated regression test before this — including the duplicate-section-id check that
+    // issue #4 already fixed in a prior review round, which had been exercised only manually). ----
+
+    #[test]
+    fn load_rejects_empty_sections() {
+        // sections/criteria are present-but-empty here (an explicit `= []`), to exercise the
+        // ensure!(!spec.sections.is_empty()) check specifically — as opposed to the field being
+        // absent entirely, which fails earlier at TOML deserialization (see
+        // load_rejects_missing_required_field for that path).
+        let toml_src = "name = \"T\"\nstore = \"apple\"\nsections = []\n\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = 1.0\n";
+        let path = write_temp_spec("empty_sections", toml_src);
+        let err = Spec::load(&path).expect_err("empty sections must be rejected");
+        assert!(format!("{err:#}").contains("sections is empty"), "{err:#}");
+    }
+
+    #[test]
+    fn load_rejects_empty_criteria() {
+        // `criteria = []` must come before the `[[sections]]` table header — TOML parses any
+        // plain key after a table-array header as belonging to that table, not top-level.
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\ncriteria = []\n{}\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("empty_criteria", &toml_src);
+        let err = Spec::load(&path).expect_err("empty criteria must be rejected");
+        assert!(format!("{err:#}").contains("criteria is empty"), "{err:#}");
+    }
+
+    #[test]
+    fn load_rejects_zero_max_chars() {
+        let toml_src = r#"
+name = "T"
+store = "apple"
+
+[[sections]]
+id = "title"
+title = "Title"
+max_chars = 0
+
+[[criteria]]
+id = "x"
+name = "x"
+weight = 1.0
+"#;
+        let path = write_temp_spec("zero_max_chars", toml_src);
+        let err = Spec::load(&path).expect_err("max_chars = 0 must be rejected");
+        assert!(format!("{err:#}").contains("max_chars"), "{err:#}");
+    }
+
+    #[test]
+    fn load_rejects_negative_max_chars() {
+        // max_chars is usize; TOML has no unsigned-integer type, so a negative literal must fail
+        // to deserialize (a type error from the TOML layer, not one of our own ensure! checks).
+        let toml_src = r#"
+name = "T"
+store = "apple"
+
+[[sections]]
+id = "title"
+title = "Title"
+max_chars = -5
+
+[[criteria]]
+id = "x"
+name = "x"
+weight = 1.0
+"#;
+        let path = write_temp_spec("negative_max_chars", toml_src);
+        assert!(
+            Spec::load(&path).is_err(),
+            "negative max_chars must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_rejects_duplicate_criteria_id() {
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\n{}\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = 1.0\n\n[[criteria]]\nid = \"x\"\nname = \"y\"\nweight = 1.0\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("dup_criteria_id", &toml_src);
+        let err = Spec::load(&path).expect_err("duplicate criteria id must be rejected");
+        assert!(
+            format!("{err:#}").contains("duplicate criteria id"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_duplicate_section_id() {
+        // Regression test for #4 (fixed in 6b39872) — a duplicate section id let
+        // field_bodies() silently overwrite one section's body via BTreeMap::insert. This
+        // exact case had no automated test until now.
+        let toml_src = r#"
+name = "T"
+store = "apple"
+
+[[sections]]
+id = "title"
+title = "Title"
+max_chars = 10
+
+[[sections]]
+id = "title"
+title = "Subtitle"
+max_chars = 20
+
+[[criteria]]
+id = "x"
+name = "x"
+weight = 1.0
+"#;
+        let path = write_temp_spec("dup_section_id", toml_src);
+        let err = Spec::load(&path).expect_err("duplicate section id must be rejected");
+        assert!(
+            format!("{err:#}").contains("duplicate section id"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_invalid_regex_in_banned_terms() {
+        let toml_src = format!(
+            "name = \"T\"\nstore = \"apple\"\nbanned_terms = [\"(unclosed\"]\n{}\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = 1.0\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("bad_regex", &toml_src);
+        let err = Spec::load(&path).expect_err("invalid regex in banned_terms must be rejected");
+        assert!(format!("{err:#}").contains("fail to compile"), "{err:#}");
+    }
+
+    #[test]
+    fn load_rejects_unparseable_toml_syntax() {
+        let path = write_temp_spec("garbage_syntax", "this is not { valid TOML at all [[[");
+        let err = Spec::load(&path).expect_err("unparseable TOML must be rejected");
+        assert!(format!("{err:#}").contains("parse"), "{err:#}");
+    }
+
+    #[test]
+    fn load_rejects_missing_required_field() {
+        // `store` has no #[serde(default)], so omitting it entirely must fail deserialization
+        // with a clear error rather than silently defaulting to some store.
+        let toml_src = format!(
+            "name = \"T\"\n{}\n[[criteria]]\nid = \"x\"\nname = \"x\"\nweight = 1.0\n",
+            MINIMAL_SECTION
+        );
+        let path = write_temp_spec("missing_store", &toml_src);
+        assert!(
+            Spec::load(&path).is_err(),
+            "missing required `store` field must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_rejects_deeply_nested_toml_without_hanging_or_crashing() {
+        // A malicious/corrupted spec file could try to blow the parser's recursion stack via
+        // deep nesting instead of a normal syntax error. Verified up to 200,000 levels during
+        // the audit that this stays a fast, clean Err (not a stack overflow); this regression
+        // test uses a smaller depth so it doesn't slow down the normal test run.
+        let depth = 50_000usize;
+        let mut src = String::from("x = ");
+        src.push_str(&"[".repeat(depth));
+        src.push_str(&"]".repeat(depth));
+        let path = write_temp_spec("deep_nesting", &src);
+        assert!(
+            Spec::load(&path).is_err(),
+            "deeply nested TOML is malformed relative to the Spec schema and must error, not hang/crash"
+        );
+    }
 }
